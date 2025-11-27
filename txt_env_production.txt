@@ -1,0 +1,33 @@
+# Production Environment Configuration
+
+# AWS Configuration
+AWS_REGION=eu-north-1
+AWS_ACCESS_KEY_ID=your_new_production_access_key
+AWS_SECRET_ACCESS_KEY=your_new_production_secret_key
+
+# Database Configuration (Production RDS)
+DATABASE_URL=postgresql+asyncpg://eduassist_admin:EduAssist2024!Prod@eduassist-postgres-prod.xxxxxxxxx.eu-north-1.rds.amazonaws.com:5432/eduassist
+
+# Cache Configuration (Production Redis)
+REDIS_URL=redis://eduassist-redis-prod.serverless.eun1.cache.amazonaws.com:6379
+
+# Security (CHANGE THESE!)
+JWT_SECRET_KEY=your-super-secure-production-jwt-key-256-bits-minimum
+SECRET_KEY=your-production-secret-key-for-sessions
+
+# AI Services
+PERPLEXITY_API_KEY=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
+
+# Application Configuration
+ENVIRONMENT=production
+PORT=8000
+LOG_LEVEL=info
+DEBUG=false
+
+# Domain Configuration (Use EC2 public IP initially)
+DOMAIN_NAME=YOUR_EC2_PUBLIC_IP
+ALLOWED_HOSTS=YOUR_EC2_PUBLIC_IP,localhost
+
+# SSL Configuration
+SSL_REDIRECT=true
+SECURE_COOKIES=true

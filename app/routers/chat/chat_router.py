@@ -137,6 +137,48 @@ async def get_teacher_chats(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/teacher/{teacher_id}/available-students", response_model=dict)
+async def get_available_students(
+    teacher_id: UUID,
+    tenant_id: UUID = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all available students for a teacher to start chat with"""
+    service = ChatService(db)
+    
+    try:
+        students = await service.get_available_students(teacher_id, tenant_id)
+        
+        return {
+            "teacher_id": str(teacher_id),
+            "available_students": students,
+            "total_students": len(students)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/student/{student_id}/available-teachers", response_model=dict)
+async def get_available_teachers(
+    student_id: UUID,
+    tenant_id: UUID = Query(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all available teachers for a student to start chat with"""
+    service = ChatService(db)
+    
+    try:
+        teachers = await service.get_available_teachers(student_id, tenant_id)
+        
+        return {
+            "student_id": str(student_id),
+            "available_teachers": teachers,
+            "total_teachers": len(teachers)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/mark-read/{chat_room_id}", response_model=dict)
 async def mark_messages_as_read(
     chat_room_id: UUID,
