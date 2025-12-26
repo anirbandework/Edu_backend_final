@@ -13,6 +13,14 @@ question_categories = Table(
     Column('category_id', UUID(as_uuid=True), ForeignKey('categories.id'), primary_key=True)
 )
 
+# Association table for quiz-class many-to-many relationship
+quiz_classes = Table(
+    'quiz_classes',
+    Base.metadata,
+    Column('quiz_id', UUID(as_uuid=True), ForeignKey('quizzes.id'), primary_key=True),
+    Column('class_id', UUID(as_uuid=True), ForeignKey('classes.id'), primary_key=True)
+)
+
 class DifficultyLevel(enum.Enum):
     EASY = "easy"
     MEDIUM = "medium"
@@ -96,8 +104,8 @@ class Question(Base):
     topic_id = Column(UUID(as_uuid=True), ForeignKey("topics.id"), nullable=False, index=True)
     
     question_text = Column(Text, nullable=False)
-    question_type = Column(Enum(QuestionType), nullable=False)
-    difficulty_level = Column(Enum(DifficultyLevel), default=DifficultyLevel.MEDIUM)
+    question_type = Column(Enum(QuestionType, values_callable=lambda obj: [e.value for e in obj]), nullable=False)
+    difficulty_level = Column(Enum(DifficultyLevel, values_callable=lambda obj: [e.value for e in obj]), default=DifficultyLevel.MEDIUM)
     
     # For multiple choice questions
     options = Column(JSON)  # {"A": "option1", "B": "option2", ...}
@@ -106,6 +114,9 @@ class Question(Base):
     
     points = Column(Integer, default=1)
     time_limit = Column(Integer)  # in seconds
+    version = Column(Integer, default=1)
+    original_source = Column(String(100))
+    import_batch_id = Column(UUID(as_uuid=True))
     
     # Relationships
     tenant = relationship("Tenant")
@@ -121,7 +132,6 @@ class Quiz(Base):
     
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     topic_id = Column(UUID(as_uuid=True), ForeignKey("topics.id"), nullable=False, index=True)
-    class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=True, index=True)
     teacher_id = Column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=False, index=True)
     
     title = Column(String(200), nullable=False)
@@ -176,6 +186,7 @@ class QuizAttempt(Base):
     
     is_completed = Column(Boolean, default=False)
     is_submitted = Column(Boolean, default=False)
+    results_published = Column(Boolean, default=False)  # New field for teacher result publishing
     
     # Relationships
     tenant = relationship("Tenant")

@@ -65,6 +65,9 @@ class Tenant(Base):
     teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
     students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
     classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    page_permissions = relationship("PagePermission", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
+    
+
     
     # Validation methods
     @validates('annual_tuition', 'registration_fee', 'charges_amount')

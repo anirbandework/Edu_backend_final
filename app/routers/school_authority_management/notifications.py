@@ -35,7 +35,7 @@ class NotificationCreate(BaseModel):
     term: Optional[str] = None
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "tenant_id": "3fd85f64-5717-4562-b3fc-2c963f66afa6",
                 "title": "Important Announcement",

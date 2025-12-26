@@ -8,16 +8,12 @@ from uuid import UUID, uuid4
 import json
 from datetime import datetime, timedelta, date
 
-from app.models.tenant_specific.assesment.quiz_question_models import Quiz, QuizAttempt, QuizAnswer, Question, Topic
-from app.schemas.assesment.ai_analytics_schemas import (
+from ...models.tenant_specific.assesment.quiz_question_models import Quiz, QuizAttempt, QuizAnswer, Question, Topic
+from ...schemas.assesment.ai_analytics_schemas import (
     ReportGenerationRequest, ReportGenerationResponse,
     InterventionRequest, InterventionResponse
 )
-from .ai_integration_service import AIService, AIServiceException
-from app.core.config_assessment import assessment_settings
-import logging
-
-logger = logging.getLogger(__name__)
+from .ai_integration_service import AIService
 
 class AIReportService:
     def __init__(self):
@@ -34,10 +30,9 @@ class AIReportService:
         if not request.student_id:
             raise ValueError("Student ID required for student progress report")
         
-        # Get student's performance data
+        # Get student's performance data (avoiding answers to prevent enum issues)
         query = select(QuizAttempt).options(
-            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic),
-            selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question).selectinload(Question.topic)
+            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic)
         ).where(
             and_(
                 QuizAttempt.student_id == request.student_id,
@@ -77,14 +72,12 @@ class AIReportService:
                 "total_points_possible": sum(a.max_score for a in attempts)
             },
             "subject_breakdown": self._analyze_subject_performance(attempts),
-            "topic_performance": self._analyze_topic_performance(attempts),
-            "difficulty_analysis": self._analyze_difficulty_performance(attempts),
             "recent_trends": self._analyze_performance_trends(attempts),
             "assessment_details": [
                 {
                     "date": attempt.created_at.isoformat(),
                     "quiz_title": attempt.quiz.title,
-                    "subject": attempt.quiz.topic.subject,
+                    "subject": attempt.quiz.topic.subject if attempt.quiz.topic else "Unknown",
                     "score": attempt.percentage,
                     "time_taken": None  # Would need to calculate from timestamps
                 }
@@ -158,16 +151,33 @@ Format as JSON:
                 json_str = response[start:end]
                 report_data = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return ReportGenerationResponse(
                     report_id=str(uuid4()),
                     report_type="student_progress",
                     generated_content=report_data,
                     summary=report_data.get("executive_summary", ""),
                     recommendations=report_data.get("student_recommendations", []),
-                    charts_data=report_data.get("charts_data")
+                    charts_data=report_data.get("charts_data"),
+                    report_title=f"Progress Report - {student_name}",
+                    student_name=student_name,
+                    generated_for=f"{student_name} - Academic Progress Report"
                 )
         except Exception as e:
-            logger.error(f"Report generation parsing error: {e}")
+            print(f"Report generation parsing error: {e}")
+        
+        # Get student name for fallback
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
         
         # Fallback report
         avg_score = sum(a.percentage for a in attempts) / len(attempts)
@@ -179,7 +189,10 @@ Format as JSON:
                 "performance": "Basic analysis completed"
             },
             summary=f"Average performance: {avg_score:.1f}%",
-            recommendations=["Continue regular assessment participation"]
+            recommendations=["Continue regular assessment participation"],
+            report_title=f"Progress Report - {student_name}",
+            student_name=student_name,
+            generated_for=f"{student_name} - Academic Progress Report"
         )
     
     async def generate_class_summary_report(
@@ -198,8 +211,7 @@ Format as JSON:
         # For now, we'll use a placeholder approach
         
         query = select(QuizAttempt).options(
-            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic),
-            selectinload(QuizAttempt.answers)
+            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic)
         ).where(
             and_(
                 QuizAttempt.tenant_id == tenant_id,
@@ -224,7 +236,7 @@ Format as JSON:
                 student_performance[student_id] = []
             student_performance[student_id].append({
                 "score": attempt.percentage,
-                "subject": attempt.quiz.topic.subject,
+                "subject": attempt.quiz.topic.subject if attempt.quiz.topic else "Unknown",
                 "date": attempt.created_at.isoformat()
             })
         
@@ -302,23 +314,43 @@ Format as JSON:
                 json_str = response[start:end]
                 report_data = json.loads(json_str)
                 
+                # Get class name
+                from ...models.tenant_specific.class_model import Class
+                class_query = select(Class).where(Class.id == request.class_id)
+                class_result = await db.execute(class_query)
+                class_obj = class_result.scalar_one_or_none()
+                class_name = class_obj.name if class_obj else "Unknown Class"
+                
                 return ReportGenerationResponse(
                     report_id=str(uuid4()),
                     report_type="class_summary",
                     generated_content=report_data,
                     summary=report_data.get("class_overview", ""),
-                    recommendations=report_data.get("teaching_recommendations", [])
+                    recommendations=report_data.get("teaching_recommendations", []),
+                    report_title=f"Class Summary - {class_name}",
+                    class_name=class_name,
+                    generated_for=f"{class_name} - Performance Summary"
                 )
         except Exception as e:
-            logger.error(f"Class report parsing error: {e}")
+            print(f"Class report parsing error: {e}")
         
         # Fallback report
+        # Get class name
+        from ...models.tenant_specific.class_model import Class
+        class_query = select(Class).where(Class.id == request.class_id)
+        class_result = await db.execute(class_query)
+        class_obj = class_result.scalar_one_or_none()
+        class_name = class_obj.name if class_obj else "Unknown Class"
+        
         return ReportGenerationResponse(
             report_id=str(uuid4()),
             report_type="class_summary",
             generated_content={"summary": "Class analysis completed"},
             summary="Basic class performance analysis",
-            recommendations=["Continue monitoring student progress"]
+            recommendations=["Continue monitoring student progress"],
+            report_title=f"Class Summary - {class_name}",
+            class_name=class_name,
+            generated_for=f"{class_name} - Performance Summary"
         )
     
     async def generate_parent_report(
@@ -334,7 +366,7 @@ Format as JSON:
         
         # Get student performance data (similar to student report but parent-focused)
         query = select(QuizAttempt).options(
-            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic)
+            selectinload(QuizAttempt.quiz)
         ).where(
             and_(
                 QuizAttempt.student_id == request.student_id,
@@ -408,22 +440,42 @@ Format as JSON:
                 json_str = response[start:end]
                 report_data = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return ReportGenerationResponse(
                     report_id=str(uuid4()),
                     report_type="parent_report",
                     generated_content=report_data,
                     summary="Your child is making good progress in their studies",
-                    recommendations=report_data.get("parent_support_tips", [])
+                    recommendations=report_data.get("parent_support_tips", []),
+                    report_title=f"Parent Report - {student_name}",
+                    student_name=student_name,
+                    generated_for=f"Parent Report for {student_name}"
                 )
         except Exception as e:
-            logger.error(f"Parent report parsing error: {e}")
+            print(f"Parent report parsing error: {e}")
+        
+        # Get student name for fallback
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
         
         return ReportGenerationResponse(
             report_id=str(uuid4()),
             report_type="parent_report",
             generated_content={"message": "Your child is participating well in assessments"},
             summary="Positive progress noted",
-            recommendations=["Continue supporting your child's learning journey"]
+            recommendations=["Continue supporting your child's learning journey"],
+            report_title=f"Parent Report - {student_name}",
+            student_name=student_name,
+            generated_for=f"Parent Report for {student_name}"
         )
     
     async def identify_intervention_needs(
@@ -436,6 +488,18 @@ Format as JSON:
         
         at_risk_students = []
         all_student_data = []
+        
+        # Get student names first
+        from ...models.tenant_specific.student import Student
+        student_names = {}
+        for student_id in request.student_ids:
+            student_query = select(Student).where(Student.id == student_id)
+            student_result = await db.execute(student_query)
+            student = student_result.scalar_one_or_none()
+            if student:
+                student_names[str(student_id)] = f"{student.first_name} {student.last_name}"
+            else:
+                student_names[str(student_id)] = "Unknown Student"
         
         for student_id in request.student_ids:
             # Get recent performance for each student
@@ -456,6 +520,7 @@ Format as JSON:
                 
                 student_data = {
                     "student_id": str(student_id),
+                    "student_name": student_names[str(student_id)],
                     "average_score": avg_score,
                     "recent_performance": [a.percentage for a in attempts[:5]],
                     "trend": recent_trend,
@@ -545,11 +610,11 @@ Format as JSON:
                     success_indicators=intervention_data.get("success_indicators", [])
                 )
         except Exception as e:
-            logger.error(f"Intervention analysis parsing error: {e}")
+            print(f"Intervention analysis parsing error: {e}")
         
         # Fallback intervention plan
         return InterventionResponse(
-            at_risk_students=[{"student_id": str(s["student_id"]), "risk_level": "medium"} for s in at_risk_students],
+            at_risk_students=[{"student_id": str(s["student_id"]), "student_name": s.get("student_name", "Unknown"), "risk_level": "medium"} for s in at_risk_students],
             intervention_strategies=[{"strategy": "Additional support", "implementation": "Regular check-ins"}],
             priority_actions=["Schedule teacher meetings", "Provide additional resources"],
             monitoring_plan={"frequency": "weekly", "metrics": ["performance_tracking"]},
@@ -571,7 +636,7 @@ Format as JSON:
         """Analyze performance by subject"""
         subject_data = {}
         for attempt in attempts:
-            subject = attempt.quiz.topic.subject
+            subject = attempt.quiz.topic.subject if attempt.quiz.topic else "Unknown"
             if subject not in subject_data:
                 subject_data[subject] = {"scores": [], "count": 0}
             subject_data[subject]["scores"].append(attempt.percentage)
@@ -607,7 +672,7 @@ Format as JSON:
         
         for attempt in attempts:
             for answer in attempt.answers:
-                difficulty = answer.question.difficulty_level.value
+                difficulty = str(answer.question.difficulty_level) if answer.question.difficulty_level else "medium"
                 if difficulty in difficulty_data:
                     difficulty_data[difficulty]["total"] += 1
                     if answer.is_correct:

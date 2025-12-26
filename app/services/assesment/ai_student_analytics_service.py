@@ -8,8 +8,8 @@ from uuid import UUID
 import json
 from datetime import datetime, timedelta, date
 
-from app.models.tenant_specific.assesment.quiz_question_models import Quiz, QuizAttempt, QuizAnswer, Question, Topic
-from app.schemas.assesment.ai_analytics_schemas import (
+from ...models.tenant_specific.assesment.quiz_question_models import Quiz, QuizAttempt, QuizAnswer, Question, Topic
+from ...schemas.assesment.ai_analytics_schemas import (
     StudentInsightsRequest, StudentInsightsResponse,
     StudyRecommendationRequest, StudyRecommendationResponse,
     WeaknessAnalysisRequest, WeaknessAnalysisResponse,
@@ -17,10 +17,6 @@ from app.schemas.assesment.ai_analytics_schemas import (
     PerformancePredictionRequest, PerformancePredictionResponse
 )
 from .ai_integration_service import AIService
-from app.core.config_assessment import assessment_settings
-import logging
-
-logger = logging.getLogger(__name__)
 
 class AILearningService:
     def __init__(self):
@@ -34,28 +30,38 @@ class AILearningService:
     ) -> StudentInsightsResponse:
         """Analyze student performance and provide personalized insights"""
         
-        # Get student's quiz attempts with pagination for performance
+        # Get student's quiz attempts with answers using raw SQL to avoid enum issues
+        from sqlalchemy import text
+        
+        # First get basic attempt data
         query = select(QuizAttempt).options(
-            selectinload(QuizAttempt.quiz),
-            selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question)
+            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic)
         ).where(
             and_(
                 QuizAttempt.student_id == request.student_id,
                 QuizAttempt.tenant_id == tenant_id,
                 QuizAttempt.is_submitted == True
             )
-        ).order_by(desc(QuizAttempt.created_at)).limit(assessment_settings.DEFAULT_PAGE_SIZE)
+        ).order_by(desc(QuizAttempt.created_at))
         
         if request.subject:
             # Filter by subject if provided
-            query = query.join(Quiz).where(Quiz.subject == request.subject)
+            query = query.join(Quiz).join(Topic).where(Topic.subject == request.subject)
         
         result = await db.execute(query)
         attempts = result.scalars().all()
         
+        # Get student name
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+        
         if not attempts:
             return StudentInsightsResponse(
                 student_id=request.student_id,
+                student_name=student_name,
                 overall_performance={},
                 subject_breakdown={},
                 learning_trends=[],
@@ -65,29 +71,200 @@ class AILearningService:
                 progress_score=0.0
             )
         
-        # Prepare data for AI analysis
-        performance_data = []
-        for attempt in attempts:
-            performance_data.append({
-                "quiz_id": str(attempt.quiz_id),
-                "quiz_title": attempt.quiz.title,
-                "subject": attempt.quiz.subject,
-                "score": attempt.total_score,
-                "max_score": attempt.max_score,
-                "percentage": attempt.percentage,
-                "date": attempt.created_at.isoformat(),
-                "answers": [
-                    {
-                        "question_id": str(answer.question_id),
-                        "topic": answer.question.topic.name if answer.question.topic else "Unknown",
-                        "difficulty": answer.question.difficulty_level.value,
-                        "is_correct": answer.is_correct,
-                        "points_earned": answer.points_earned,
-                        "max_points": answer.question.points
-                    }
-                    for answer in attempt.answers
-                ]
-            })
+        # Get detailed answer analysis using raw SQL to avoid enum issues
+        from sqlalchemy import text
+        
+        answer_query = text("""
+            SELECT qa.attempt_id, qa.question_id, qa.is_correct, qa.points_earned,
+                   q.question_text, q.points as max_points, t.name as topic_name
+            FROM quiz_answers qa
+            JOIN questions q ON qa.question_id = q.id
+            JOIN topics t ON q.topic_id = t.id
+            WHERE qa.attempt_id = ANY(:attempt_ids)
+            ORDER BY qa.attempt_id, qa.question_id
+        """)
+        
+        attempt_ids = [str(attempt.id) for attempt in attempts]
+        answer_result = await db.execute(answer_query, {"attempt_ids": attempt_ids})
+        answers_data = answer_result.fetchall()
+        
+        # Analyze topic-wise performance
+        topic_performance = {}
+        for answer in answers_data:
+            topic = answer.topic_name
+            if topic not in topic_performance:
+                topic_performance[topic] = {"correct": 0, "total": 0, "points_earned": 0, "max_points": 0}
+            
+            topic_performance[topic]["total"] += 1
+            topic_performance[topic]["max_points"] += answer.max_points
+            topic_performance[topic]["points_earned"] += answer.points_earned or 0
+            if answer.is_correct:
+                topic_performance[topic]["correct"] += 1
+        
+        # Calculate topic percentages and identify strengths/weaknesses
+        topic_analysis = {}
+        strong_topics = []
+        weak_topics = []
+        
+        for topic, perf in topic_performance.items():
+            if perf["total"] > 0:
+                percentage = (perf["correct"] / perf["total"]) * 100
+                topic_analysis[topic] = {
+                    "percentage": percentage,
+                    "correct": perf["correct"],
+                    "total": perf["total"]
+                }
+                
+                if percentage >= 60:
+                    strong_topics.append(f"{topic} ({percentage:.1f}%)")
+                elif percentage <= 30:
+                    weak_topics.append(f"{topic} ({percentage:.1f}%)")
+        
+        subject_topics = set(topic_performance.keys())
+        
+        # Analyze actual performance data
+        scores = [attempt.percentage for attempt in attempts]
+        avg_score = sum(scores) / len(scores) if scores else 0
+        
+        # Determine performance level and trends
+        recent_scores = scores[-3:] if len(scores) >= 3 else scores
+        trend = "stable"
+        if len(scores) >= 3:
+            if recent_scores[-1] > recent_scores[0]:
+                trend = "improving"
+            elif recent_scores[-1] < recent_scores[0]:
+                trend = "declining"
+        
+        # Performance-based analysis
+        if avg_score < 30:
+            performance_level = "needs_significant_improvement"
+            base_strengths = ["Shows persistence by attempting multiple quizzes"]
+            if strong_topics:
+                base_strengths.extend([f"Relatively better performance in: {', '.join(strong_topics)}"]) 
+            strengths = base_strengths
+            
+            base_weaknesses = ["Very low quiz scores indicate fundamental knowledge gaps"]
+            if weak_topics:
+                base_weaknesses.extend([f"Significant struggles in: {', '.join(weak_topics)}"]) 
+            base_weaknesses.extend([
+                "May need to review basic concepts before attempting advanced problems",
+                "Possible issues with question comprehension or time management"
+            ])
+            weaknesses = base_weaknesses
+            base_recommendations = ["Start with foundational concepts review"]
+            if weak_topics:
+                base_recommendations.append(f"Focus intensive practice on: {', '.join([t.split(' (')[0] for t in weak_topics])}")
+            base_recommendations.extend([
+                "Work with a tutor or teacher for personalized guidance",
+                "Practice basic problems before attempting quiz-level questions",
+                "Review incorrect answers to understand mistake patterns"
+            ])
+            recommendations = base_recommendations
+        elif avg_score < 50:
+            performance_level = "below_average"
+            base_strengths = ["Regular participation", "Some correct answers show partial understanding"]
+            if strong_topics:
+                base_strengths.append(f"Good performance in: {', '.join(strong_topics)}")
+            strengths = base_strengths
+            
+            base_weaknesses = ["Below average performance"]
+            if weak_topics:
+                base_weaknesses.append(f"Needs improvement in: {', '.join(weak_topics)}")
+            base_weaknesses.append("Key concept gaps identified")
+            weaknesses = base_weaknesses
+            
+            base_recommendations = ["Focus on weak topics", "Increase practice time"]
+            if weak_topics:
+                base_recommendations.append(f"Extra practice needed in: {', '.join([t.split(' (')[0] for t in weak_topics])}")
+            base_recommendations.append("Seek additional help")
+            recommendations = base_recommendations
+        elif avg_score < 70:
+            performance_level = "average"
+            base_strengths = ["Consistent participation", "Average performance level"]
+            if strong_topics:
+                base_strengths.append(f"Strong areas: {', '.join(strong_topics)}")
+            strengths = base_strengths
+            
+            base_weaknesses = ["Room for improvement in accuracy"]
+            if weak_topics:
+                base_weaknesses.append(f"Weaker areas: {', '.join(weak_topics)}")
+            weaknesses = base_weaknesses
+            
+            base_recommendations = ["Target specific weak areas", "Regular practice sessions"]
+            if weak_topics:
+                base_recommendations.append(f"Focus practice on: {', '.join([t.split(' (')[0] for t in weak_topics])}")
+            recommendations = base_recommendations
+        else:
+            performance_level = "good"
+            base_strengths = ["Good performance", "Strong understanding"]
+            if strong_topics:
+                base_strengths.append(f"Excellent in: {', '.join(strong_topics)}")
+            strengths = base_strengths
+            
+            base_weaknesses = ["Minor areas for refinement"]
+            if weak_topics:
+                base_weaknesses.append(f"Could improve: {', '.join(weak_topics)}")
+            weaknesses = base_weaknesses
+            
+            base_recommendations = ["Continue current approach"]
+            if weak_topics:
+                base_recommendations.append(f"Polish skills in: {', '.join([t.split(' (')[0] for t in weak_topics])}")
+            base_recommendations.append("Challenge with advanced problems")
+            recommendations = base_recommendations
+        
+        # Topic analysis already done above
+        
+        learning_trends = [
+            f"Performance trend: {trend} (average: {avg_score:.1f}%)",
+            f"Completed {len(attempts)} quizzes across {len(subject_topics)} topics"
+        ]
+        
+        if avg_score < 30:
+            learning_trends.append("Scores indicate need for foundational review")
+        
+        # Get topic names for better display
+        topic_names = {}
+        for topic_id in subject_topics:
+            topic_query = select(Topic).where(Topic.name == topic_id)
+            topic_result = await db.execute(topic_query)
+            topic = topic_result.scalar_one_or_none()
+            if topic:
+                topic_names[topic_id] = topic.name
+        
+        # Enhanced topic analysis with names
+        enhanced_topic_analysis = {}
+        for topic, data in topic_analysis.items():
+            enhanced_topic_analysis[topic] = {
+                **data,
+                "topic_name": topic_names.get(topic, topic)
+            }
+        
+        return StudentInsightsResponse(
+            student_id=request.student_id,
+            student_name=student_name,
+            overall_performance={
+                "average_score": avg_score,
+                "total_quizzes": len(attempts),
+                "performance_level": performance_level,
+                "trend": trend
+            },
+            subject_breakdown={
+                "Mathematics": {
+                    "average": avg_score,
+                    "quiz_count": len(attempts),
+                    "topics_covered": len(subject_topics),
+                    "performance_level": performance_level,
+                    "topic_analysis": enhanced_topic_analysis
+                }
+            },
+            learning_trends=learning_trends,
+            strengths=strengths,
+            weaknesses=weaknesses,
+            recommendations=recommendations,
+            progress_score=min(avg_score / 10, 10.0)
+        )
+        
+        # Temporarily disabled due to enum mismatch - using fallback above
         
         prompt = f"""
 Analyze this student's learning performance and provide detailed insights:
@@ -157,7 +334,7 @@ Format as JSON:
                     progress_score=analysis.get("progress_score", 0.0)
                 )
         except Exception as e:
-            logger.error(f"AI analysis parsing error: {e}")
+            print(f"AI analysis parsing error: {e}")
         
         # Fallback analysis
         scores = [attempt.percentage for attempt in attempts]
@@ -182,9 +359,9 @@ Format as JSON:
     ) -> StudyRecommendationResponse:
         """Generate personalized study recommendations"""
         
-        # Get student's recent performance
+        # Get student's recent performance (avoiding answers to prevent enum issues)
         query = select(QuizAttempt).options(
-            selectinload(QuizAttempt.answers).selectinload(QuizAnswer.question).selectinload(Question.topic)
+            selectinload(QuizAttempt.quiz).selectinload(Quiz.topic)
         ).where(
             and_(
                 QuizAttempt.student_id == request.student_id,
@@ -196,19 +373,22 @@ Format as JSON:
         result = await db.execute(query)
         recent_attempts = result.scalars().all()
         
-        # Analyze weak topics
+        # Analyze weak topics based on quiz performance
         topic_performance = {}
         for attempt in recent_attempts:
-            for answer in attempt.answers:
-                topic_name = answer.question.topic.name if answer.question.topic else "General"
-                if topic_name not in topic_performance:
-                    topic_performance[topic_name] = {"correct": 0, "total": 0, "points_earned": 0, "max_points": 0}
-                
-                topic_performance[topic_name]["total"] += 1
-                topic_performance[topic_name]["max_points"] += answer.question.points
-                if answer.is_correct:
-                    topic_performance[topic_name]["correct"] += 1
-                topic_performance[topic_name]["points_earned"] += answer.points_earned or 0
+            topic_name = attempt.quiz.topic.name if attempt.quiz.topic else "General"
+            if topic_name not in topic_performance:
+                topic_performance[topic_name] = {"scores": [], "total_attempts": 0}
+            
+            topic_performance[topic_name]["scores"].append(attempt.percentage)
+            topic_performance[topic_name]["total_attempts"] += 1
+        
+        # Calculate averages for weak topic identification
+        for topic, data in topic_performance.items():
+            if data["scores"]:
+                data["average_score"] = sum(data["scores"]) / len(data["scores"])
+                data["correct"] = len([s for s in data["scores"] if s >= 60])  # Assuming 60% is passing
+                data["total"] = len(data["scores"])
         
         prompt = f"""
 Generate personalized study recommendations for this student:
@@ -276,8 +456,16 @@ Format as JSON:
                 json_str = response[start:end]
                 recommendations = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return StudyRecommendationResponse(
                     student_id=request.student_id,
+                    student_name=student_name,
                     priority_topics=recommendations.get("priority_topics", []),
                     study_activities=recommendations.get("study_activities", []),
                     weekly_schedule=recommendations.get("weekly_schedule", {}),
@@ -286,14 +474,22 @@ Format as JSON:
                     estimated_improvement=recommendations.get("estimated_improvement", "")
                 )
         except Exception as e:
-            logger.error(f"Study recommendations parsing error: {e}")
+            print(f"Study recommendations parsing error: {e}")
         
         # Fallback recommendations
         weak_topics = [topic for topic, perf in topic_performance.items() 
-                      if perf["total"] > 0 and (perf["correct"] / perf["total"]) < 0.7]
+                      if perf.get("total", 0) > 0 and (perf.get("correct", 0) / perf["total"]) < 0.7]
+        
+        # Get student name
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
         
         return StudyRecommendationResponse(
             student_id=request.student_id,
+            student_name=student_name,
             priority_topics=[{"topic": topic, "priority_level": "medium"} for topic in weak_topics[:3]],
             study_activities=[{"activity": "Review and practice", "duration": "30 minutes daily"}],
             weekly_schedule={"Daily": ["Practice weak topics - 30 minutes"]},
@@ -323,7 +519,7 @@ Format as JSON:
         )
         
         if request.subject:
-            query = query.join(QuizAttempt.quiz).join(Quiz.topic).where(Topic.subject == request.subject)
+            query = query.join(Quiz).join(Topic).where(Topic.subject == request.subject)
         
         result = await db.execute(query)
         answers = result.scalars().all()
@@ -348,7 +544,7 @@ Format as JSON:
             gap_analysis[topic]["total_incorrect"] += 1
             gap_analysis[topic]["by_difficulty"][difficulty] += 1
             
-            q_type = question.question_type.value
+            q_type = str(question.question_type) if question.question_type else "multiple_choice"
             if q_type not in gap_analysis[topic]["question_types"]:
                 gap_analysis[topic]["question_types"][q_type] = 0
             gap_analysis[topic]["question_types"][q_type] += 1
@@ -412,8 +608,16 @@ Format as JSON:
                 json_str = response[start:end]
                 analysis = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return WeaknessAnalysisResponse(
                     student_id=request.student_id,
+                    student_name=student_name,
                     knowledge_gaps=analysis.get("knowledge_gaps", []),
                     learning_patterns=analysis.get("learning_patterns", []),
                     skill_deficiencies=analysis.get("skill_deficiencies", []),
@@ -422,13 +626,21 @@ Format as JSON:
                     priority_order=analysis.get("priority_order", [])
                 )
         except Exception as e:
-            logger.error(f"Weakness analysis parsing error: {e}")
+            print(f"Weakness analysis parsing error: {e}")
         
         # Fallback analysis
         weak_topics = list(gap_analysis.keys())
         
+        # Get student name
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+        
         return WeaknessAnalysisResponse(
             student_id=request.student_id,
+            student_name=student_name,
             knowledge_gaps=[{"topic": topic, "severity": "medium"} for topic in weak_topics[:3]],
             learning_patterns=["Requires detailed analysis"],
             skill_deficiencies=["To be determined"],
@@ -458,7 +670,7 @@ Format as JSON:
         )
         
         if request.exam_subjects:
-            query = query.join(QuizAttempt.quiz).join(Quiz.topic).where(Topic.subject.in_(request.exam_subjects))
+            query = query.join(Quiz).join(Topic).where(Topic.subject.in_(request.exam_subjects))
         
         result = await db.execute(query)
         attempts = result.scalars().all()
@@ -477,7 +689,7 @@ Exam Type: {request.exam_type or 'General'}
 Study Hours Available: {request.daily_study_hours or 'Not specified'} hours per day
 
 Student Performance Data: {json.dumps([{
-    "subject": attempt.quiz.topic.subject,
+    "subject": attempt.quiz.topic.subject if attempt.quiz.topic else "Unknown",
     "score": attempt.percentage,
     "date": attempt.created_at.isoformat()
 } for attempt in attempts[-10:]], indent=2)}
@@ -536,8 +748,16 @@ Format as JSON:
                 json_str = response[start:end]
                 plan = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return ExamPrepResponse(
                     student_id=request.student_id,
+                    student_name=student_name,
                     exam_date=request.exam_date,
                     study_schedule=plan.get("study_schedule", {}),
                     topic_priorities=plan.get("topic_priorities", []),
@@ -547,11 +767,19 @@ Format as JSON:
                     estimated_readiness=85.0
                 )
         except Exception as e:
-            logger.error(f"Exam prep parsing error: {e}")
+            print(f"Exam prep parsing error: {e}")
         
         # Fallback plan
+        # Get student name
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+        
         return ExamPrepResponse(
             student_id=request.student_id,
+            student_name=student_name,
             exam_date=request.exam_date,
             study_schedule={"daily": {"tasks": ["Study and practice"]}},
             topic_priorities=[{"subject": "General", "priority": "medium"}],
@@ -602,7 +830,7 @@ Format as JSON:
                 "date": attempt.created_at.isoformat(),
                 "score": attempt.percentage,
                 "subject": attempt.quiz.subject,
-                "quiz_type": attempt.quiz.quiz_type.value if hasattr(attempt.quiz, 'quiz_type') else "general"
+                "quiz_type": "general"
             })
         
         prompt = f"""
@@ -653,8 +881,16 @@ Format as JSON:
                 json_str = response[start:end]
                 prediction = json.loads(json_str)
                 
+                # Get student name
+                from ...models.tenant_specific.student import Student
+                student_query = select(Student).where(Student.id == request.student_id)
+                student_result = await db.execute(student_query)
+                student = student_result.scalar_one_or_none()
+                student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+                
                 return PerformancePredictionResponse(
                     student_id=request.student_id,
+                    student_name=student_name,
                     predicted_score=prediction.get("predicted_score", 0.0),
                     confidence_level=prediction.get("confidence_level", 0.0),
                     performance_trend=prediction.get("performance_trend", "stable"),
@@ -663,14 +899,22 @@ Format as JSON:
                     recommendations=prediction.get("recommendations", [])
                 )
         except Exception as e:
-            logger.error(f"Performance prediction parsing error: {e}")
+            print(f"Performance prediction parsing error: {e}")
         
         # Fallback prediction based on recent average
         recent_scores = [attempt.percentage for attempt in attempts[-5:]]
         avg_score = sum(recent_scores) / len(recent_scores)
         
+        # Get student name
+        from ...models.tenant_specific.student import Student
+        student_query = select(Student).where(Student.id == request.student_id)
+        student_result = await db.execute(student_query)
+        student = student_result.scalar_one_or_none()
+        student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
+        
         return PerformancePredictionResponse(
             student_id=request.student_id,
+            student_name=student_name,
             predicted_score=avg_score,
             confidence_level=0.6,
             performance_trend="stable",

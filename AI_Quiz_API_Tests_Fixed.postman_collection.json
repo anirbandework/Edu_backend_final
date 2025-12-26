@@ -1,0 +1,474 @@
+{
+	"info": {
+		"_postman_id": "ai-quiz-api-tests-fixed",
+		"name": "AI Quiz API Tests - Fixed",
+		"description": "Fixed test collection for AI Quiz Generation and Management APIs",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "0. Create Topic for Testing",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"name\": \"Physics - Newton's Laws\",\n  \"description\": \"Understanding Newton's three laws of motion and their applications\",\n  \"subject\": \"Physics\",\n  \"grade_level\": 11\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/quiz/topics?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"quiz",
+						"topics"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "1. Generate Questions - Multiple Choice (No Save)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"topic\": \"Photosynthesis\",\n  \"subject\": \"Biology\",\n  \"grade_level\": 10,\n  \"question_type\": \"multiple_choice\",\n  \"difficulty\": \"medium\",\n  \"count\": 5,\n  \"learning_objectives\": \"Understand the process of photosynthesis, identify key components, and analyze the chemical equation\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/generate-questions?tenant_id={{tenant_id}}&auto_save=false",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"generate-questions"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "auto_save",
+							"value": "false"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "2. Generate Questions - Short Answer (No Save)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"topic\": \"Newton's Laws of Motion\",\n  \"subject\": \"Physics\",\n  \"grade_level\": 11,\n  \"question_type\": \"short_answer\",\n  \"difficulty\": \"hard\",\n  \"count\": 3,\n  \"learning_objectives\": \"Apply Newton's laws to real-world scenarios and explain the relationship between force, mass, and acceleration\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/generate-questions?tenant_id={{tenant_id}}&auto_save=false",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"generate-questions"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "auto_save",
+							"value": "false"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "3. Generate Questions - With Auto Save",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"topic\": \"Newton's Laws of Motion\",\n  \"topic_id\": \"{{topic_id}}\",\n  \"subject\": \"Physics\",\n  \"grade_level\": 11,\n  \"question_type\": \"short_answer\",\n  \"difficulty\": \"medium\",\n  \"count\": 2,\n  \"learning_objectives\": \"Apply Newton's laws to real-world scenarios\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/generate-questions?tenant_id={{tenant_id}}&auto_save=true",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"generate-questions"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "auto_save",
+							"value": "true"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "4. Generate Questions - True/False",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"topic\": \"World War II\",\n  \"subject\": \"History\",\n  \"grade_level\": 9,\n  \"question_type\": \"true_false\",\n  \"difficulty\": \"easy\",\n  \"count\": 5,\n  \"learning_objectives\": \"Identify key events, dates, and figures from World War II\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/generate-questions?tenant_id={{tenant_id}}&auto_save=false",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"generate-questions"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "auto_save",
+							"value": "false"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "5. Batch Generate Questions",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"requests\": [\n    {\n      \"topic\": \"Algebra Basics\",\n      \"subject\": \"Mathematics\",\n      \"grade_level\": 8,\n      \"question_type\": \"multiple_choice\",\n      \"difficulty\": \"easy\",\n      \"count\": 3,\n      \"learning_objectives\": \"Solve basic algebraic equations\"\n    },\n    {\n      \"topic\": \"Geometry\",\n      \"subject\": \"Mathematics\",\n      \"grade_level\": 9,\n      \"question_type\": \"true_false\",\n      \"difficulty\": \"medium\",\n      \"count\": 3,\n      \"learning_objectives\": \"Identify geometric shapes and properties\"\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/batch-generate-questions?tenant_id={{tenant_id}}&auto_save=false",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"batch-generate-questions"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "auto_save",
+							"value": "false"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "6. Suggest Quiz Assembly",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"topic_id\": \"{{topic_id}}\",\n  \"target_duration\": 45,\n  \"difficulty_distribution\": {\n    \"easy\": 40,\n    \"medium\": 40,\n    \"hard\": 20\n  },\n  \"total_questions\": 10,\n  \"total_points\": 100\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/suggest-quiz-assembly?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"suggest-quiz-assembly"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "7. Grade Subjective Answer - Good Response",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"question_text\": \"Explain Newton's First Law of Motion with an example.\",\n  \"correct_answer\": \"Newton's First Law states that an object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. Example: A ball rolling on a smooth surface will continue rolling until friction or another force stops it.\",\n  \"student_answer\": \"Objects don't change their motion unless a force acts on them. Like a book on a table stays there until you push it, and a moving car keeps going until brakes are applied.\",\n  \"max_points\": 10,\n  \"rubric\": \"Full points for correct law statement and relevant example. Partial credit for incomplete understanding.\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/grade-subjective",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"grade-subjective"
+					]
+				}
+			}
+		},
+		{
+			"name": "8. Grade Subjective Answer - Poor Response",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"question_text\": \"Explain the water cycle and its stages.\",\n  \"correct_answer\": \"The water cycle consists of evaporation (water turns to vapor), condensation (vapor forms clouds), precipitation (rain/snow falls), and collection (water gathers in bodies of water). This cycle is powered by solar energy.\",\n  \"student_answer\": \"Water goes up and comes down as rain.\",\n  \"max_points\": 12,\n  \"rubric\": \"Full points for mentioning all stages with explanations. Partial credit for incomplete stages.\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/grade-subjective",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"grade-subjective"
+					]
+				}
+			}
+		},
+		{
+			"name": "9. Analyze Quiz Performance",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"quiz_id\": \"{{quiz_id}}\",\n  \"class_id\": \"{{class_id}}\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/analyze-performance?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"analyze-performance"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "10. Enhanced Quiz Grading - With AI",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/enhanced-grading/{{attempt_id}}?tenant_id={{tenant_id}}&use_ai_grading=true",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"enhanced-grading",
+						"{{attempt_id}}"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "use_ai_grading",
+							"value": "true"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "11. Enhanced Quiz Grading - Manual Only",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": ""
+				},
+				"url": {
+					"raw": "{{base_url}}/assessment/ai-quiz/enhanced-grading/{{attempt_id}}?tenant_id={{tenant_id}}&use_ai_grading=false",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"assessment",
+						"ai-quiz",
+						"enhanced-grading",
+						"{{attempt_id}}"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "use_ai_grading",
+							"value": "false"
+						}
+					]
+				}
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://192.168.1.8:8000",
+			"type": "string"
+		},
+		{
+			"key": "tenant_id",
+			"value": "351e3b19-0c37-4e48-a06d-3ceaa7e584c2",
+			"type": "string"
+		},
+		{
+			"key": "school_authority_id",
+			"value": "25227d19-074b-4481-b376-53e6d7b85676",
+			"type": "string"
+		},
+		{
+			"key": "teacher_id",
+			"value": "4f2be8ad-999e-4e40-a6e1-e0e55485a2e0",
+			"type": "string"
+		},
+		{
+			"key": "student_id",
+			"value": "27d33111-7c42-4e34-953b-5e92b2f6537d",
+			"type": "string"
+		},
+		{
+			"key": "class_id",
+			"value": "71a12956-ac40-400d-94b3-c318beb40f58",
+			"type": "string"
+		},
+		{
+			"key": "topic_id",
+			"value": "REPLACE_WITH_TOPIC_ID_FROM_STEP_0",
+			"type": "string",
+			"description": "Get this ID from the response of step 0 - Create Topic"
+		},
+		{
+			"key": "quiz_id",
+			"value": "REPLACE_WITH_ACTUAL_QUIZ_ID",
+			"type": "string",
+			"description": "Replace with actual quiz ID from your system"
+		},
+		{
+			"key": "attempt_id",
+			"value": "66dc6b10-5d7f-4bdc-a22e-0d42f388f75b",
+			"type": "string",
+			"description": "Replace with actual attempt ID from your system"
+		}
+	]
+}

@@ -23,7 +23,7 @@ class RateLimiter:
         # Check limit
         if len(self.requests[key]) >= max_requests:
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        
+    
         # Add current request
         self.requests[key].append(now)
 

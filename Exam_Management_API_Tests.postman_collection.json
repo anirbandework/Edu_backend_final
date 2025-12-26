@@ -1,0 +1,555 @@
+{
+	"info": {
+		"_postman_id": "exam-management-api-tests",
+		"name": "Exam Management API Tests",
+		"description": "Complete test collection for Exam Management System with flexible marking schemes",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://192.168.1.8:8000",
+			"type": "string"
+		},
+		{
+			"key": "tenant_id",
+			"value": "351e3b19-0c37-4e48-a06d-3ceaa7e584c2",
+			"type": "string"
+		},
+		{
+			"key": "school_authority_id",
+			"value": "25227d19-074b-4481-b376-53e6d7b85676",
+			"type": "string"
+		},
+		{
+			"key": "teacher_id",
+			"value": "4f2be8ad-999e-4e40-a6e1-e0e55485a2e0",
+			"type": "string"
+		},
+		{
+			"key": "student_id",
+			"value": "27d33111-7c42-4e34-953b-5e92b2f6537d",
+			"type": "string"
+		},
+		{
+			"key": "class_id",
+			"value": "71a12956-ac40-400d-94b3-c318beb40f58",
+			"type": "string"
+		},
+		{
+			"key": "exam_id",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Create Physical Education Exam",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"if (pm.response.code === 200) {",
+							"    const response = pm.response.json();",
+							"    pm.collectionVariables.set('exam_id', response.id);",
+							"    pm.test('Exam created successfully', () => {",
+							"        pm.expect(response.exam_name).to.eql('Physical Fitness Assessment 2024');",
+							"        pm.expect(response.exam_type).to.eql('Sports Day');",
+							"    });",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"exam_name\": \"Physical Fitness Assessment 2024\",\n  \"exam_code\": \"PE_SPORTS_2024_Q1\",\n  \"exam_type\": \"Sports Day\",\n  \"description\": \"Comprehensive physical fitness evaluation for all grades\",\n  \"academic_year\": \"2023-24\",\n  \"term\": \"Quarter 1\",\n  \"subject\": \"Physical Education\",\n  \"grade_levels\": [9, 10, 11, 12],\n  \"exam_date\": \"2024-02-15T09:00:00\",\n  \"start_time\": \"2024-02-15T09:00:00\",\n  \"end_time\": \"2024-02-15T11:00:00\",\n  \"duration_minutes\": 120,\n  \"exam_config\": {\n    \"venue\": \"School Sports Ground\",\n    \"equipment_required\": [\"Stopwatch\", \"Measuring Tape\", \"Weighing Scale\"],\n    \"weather_dependent\": true,\n    \"backup_date\": \"2024-02-22T09:00:00\",\n    \"instructor_notes\": \"Ensure all safety equipment is available\"\n  },\n  \"marking_scheme\": {\n    \"total_marks\": 100,\n    \"components\": {\n      \"running_1500m\": {\n        \"max_marks\": 25,\n        \"criteria\": {\n          \"excellent\": {\"time_limit\": \"6:00\", \"marks\": 25},\n          \"good\": {\"time_limit\": \"7:00\", \"marks\": 20},\n          \"average\": {\"time_limit\": \"8:00\", \"marks\": 15},\n          \"below_average\": {\"time_limit\": \"9:00\", \"marks\": 10}\n        }\n      },\n      \"push_ups\": {\n        \"max_marks\": 20,\n        \"criteria\": {\n          \"boys\": {\"excellent\": 30, \"good\": 25, \"average\": 20, \"below_average\": 15},\n          \"girls\": {\"excellent\": 20, \"good\": 15, \"average\": 12, \"below_average\": 8}\n        }\n      },\n      \"flexibility\": {\n        \"max_marks\": 15,\n        \"measurement\": \"sit_and_reach_cm\"\n      },\n      \"coordination\": {\n        \"max_marks\": 20,\n        \"tests\": [\"ball_juggling\", \"ladder_drill\"]\n      },\n      \"attendance_participation\": {\n        \"max_marks\": 20,\n        \"based_on\": \"regular_class_participation\"\n      }\n    }\n  },\n  \"grading_criteria\": {\n    \"A+\": {\"min_percentage\": 90},\n    \"A\": {\"min_percentage\": 80},\n    \"B+\": {\"min_percentage\": 70},\n    \"B\": {\"min_percentage\": 60},\n    \"C\": {\"min_percentage\": 50},\n    \"D\": {\"min_percentage\": 40},\n    \"F\": {\"min_percentage\": 0}\n  },\n  \"class_ids\": [\"{{class_id}}\"]\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&created_by={{school_authority_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "created_by",
+							"value": "{{school_authority_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "2. Create Mathematics Written Exam",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"exam_name\": \"Mathematics Mid-Term Examination\",\n  \"exam_code\": \"MATH_CHAPTER_2024\",\n  \"exam_type\": \"Chapter Test\",\n  \"description\": \"Mid-term assessment covering Algebra and Geometry\",\n  \"academic_year\": \"2023-24\",\n  \"term\": \"Mid-Term\",\n  \"subject\": \"Mathematics\",\n  \"grade_levels\": [10],\n  \"exam_date\": \"2024-02-20T09:00:00\",\n  \"start_time\": \"2024-02-20T09:00:00\",\n  \"end_time\": \"2024-02-20T12:00:00\",\n  \"duration_minutes\": 180,\n  \"exam_config\": {\n    \"question_paper_code\": \"MATH_10_MT_2024_A\",\n    \"calculator_allowed\": false,\n    \"formula_sheet_provided\": true,\n    \"answer_sheet_type\": \"OMR + Descriptive\",\n    \"seating_arrangement\": \"alternate_seating\",\n    \"room_numbers\": [\"101\", \"102\", \"103\"]\n  },\n  \"marking_scheme\": {\n    \"total_marks\": 100,\n    \"sections\": {\n      \"section_a_mcq\": {\n        \"questions\": 20,\n        \"marks_per_question\": 1,\n        \"total_marks\": 20,\n        \"negative_marking\": -0.25\n      },\n      \"section_b_short_answer\": {\n        \"questions\": 10,\n        \"marks_per_question\": 3,\n        \"total_marks\": 30,\n        \"partial_marking\": true\n      },\n      \"section_c_long_answer\": {\n        \"questions\": 5,\n        \"marks_per_question\": 10,\n        \"total_marks\": 50,\n        \"step_marking\": {\n          \"method\": 2,\n          \"calculation\": 4,\n          \"final_answer\": 2,\n          \"diagram\": 2\n        }\n      }\n    }\n  },\n  \"grading_criteria\": {\n    \"A1\": {\"min_percentage\": 91, \"grade_point\": 10},\n    \"A2\": {\"min_percentage\": 81, \"grade_point\": 9},\n    \"B1\": {\"min_percentage\": 71, \"grade_point\": 8},\n    \"B2\": {\"min_percentage\": 61, \"grade_point\": 7},\n    \"C1\": {\"min_percentage\": 51, \"grade_point\": 6},\n    \"C2\": {\"min_percentage\": 41, \"grade_point\": 5},\n    \"D\": {\"min_percentage\": 33, \"grade_point\": 4},\n    \"E\": {\"min_percentage\": 0, \"grade_point\": 0}\n  },\n  \"class_ids\": [\"{{class_id}}\"]\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&created_by={{teacher_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "created_by",
+							"value": "{{teacher_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "3. Get All Exams",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&skip=0&limit=100",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "100"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "4. Get Specific Exam",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "5. Update Exam Status to Active",
+			"request": {
+				"method": "PUT",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"status\": \"active\",\n  \"description\": \"Updated exam description - now active for students\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "6. Create Single Student Mark",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"student_id\": \"{{student_id}}\",\n  \"marks_data\": {\n    \"running_1500m\": {\n      \"time_taken\": \"6:30\",\n      \"marks_awarded\": 22,\n      \"performance_level\": \"good\"\n    },\n    \"push_ups\": {\n      \"count\": 28,\n      \"gender\": \"male\",\n      \"marks_awarded\": 18\n    },\n    \"flexibility\": {\n      \"sit_and_reach_cm\": 25,\n      \"marks_awarded\": 12\n    },\n    \"coordination\": {\n      \"ball_juggling_score\": 15,\n      \"ladder_drill_time\": \"12.5\",\n      \"marks_awarded\": 16\n    },\n    \"attendance_participation\": {\n      \"classes_attended\": 18,\n      \"total_classes\": 20,\n      \"marks_awarded\": 18\n    }\n  },\n  \"total_marks\": 100,\n  \"obtained_marks\": 86,\n  \"percentage\": 86,\n  \"grade\": \"A\",\n  \"remarks\": \"Excellent overall performance in physical fitness\",\n  \"attendance_status\": \"present\"\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}/marks?tenant_id={{tenant_id}}&class_id={{class_id}}&marked_by={{teacher_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}",
+						"marks"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "class_id",
+							"value": "{{class_id}}"
+						},
+						{
+							"key": "marked_by",
+							"value": "{{teacher_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "7. Get Exam Marks",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}/marks?tenant_id={{tenant_id}}&skip=0&limit=100",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}",
+						"marks"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "100"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "8. Bulk Create Marks",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n  \"exam_id\": \"{{exam_id}}\",\n  \"batch_name\": \"PE_Assessment_Batch_1\",\n  \"marks_data\": [\n    {\n      \"student_id\": \"{{student_id}}\",\n      \"marks_data\": {\n        \"running_1500m\": {\n          \"time_taken\": \"6:15\",\n          \"marks_awarded\": 24,\n          \"performance_level\": \"excellent\"\n        },\n        \"push_ups\": {\n          \"count\": 32,\n          \"gender\": \"male\",\n          \"marks_awarded\": 20\n        },\n        \"flexibility\": {\n          \"sit_and_reach_cm\": 28,\n          \"marks_awarded\": 14\n        },\n        \"coordination\": {\n          \"ball_juggling_score\": 18,\n          \"ladder_drill_time\": \"11.8\",\n          \"marks_awarded\": 18\n        },\n        \"attendance_participation\": {\n          \"classes_attended\": 19,\n          \"total_classes\": 20,\n          \"marks_awarded\": 19\n        }\n      },\n      \"total_marks\": 100,\n      \"obtained_marks\": 95,\n      \"percentage\": 95,\n      \"grade\": \"A+\",\n      \"remarks\": \"Outstanding performance - updated via bulk upload\",\n      \"attendance_status\": \"present\"\n    }\n  ]\n}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}/bulk-marks?tenant_id={{tenant_id}}&marked_by={{teacher_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}",
+						"bulk-marks"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "marked_by",
+							"value": "{{teacher_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "9. Get Student Exam History",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/students/{{student_id}}/exam-history?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"students",
+						"{{student_id}}",
+						"exam-history"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "10. Get Exam Analytics",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}/analytics?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}",
+						"analytics"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "11. Publish Exam Results",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{}"
+				},
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}/publish?tenant_id={{tenant_id}}&published_by={{school_authority_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}",
+						"publish"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "published_by",
+							"value": "{{school_authority_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "12. Delete Exam (Soft Delete)",
+			"request": {
+				"method": "DELETE",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams/{{exam_id}}?tenant_id={{tenant_id}}",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams",
+						"{{exam_id}}"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "13. Filter Exams by Custom Type",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&exam_type=physical&skip=0&limit=50",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "exam_type",
+							"value": "Sports Day"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "14. Filter Exams by Academic Year",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&academic_year=2023-24&skip=0&limit=50",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "academic_year",
+							"value": "2023-24"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				}
+			}
+		},
+		{
+			"name": "15. Filter Exams by Status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{base_url}}/exam-management/exams?tenant_id={{tenant_id}}&status=active&skip=0&limit=50",
+					"host": [
+						"{{base_url}}"
+					],
+					"path": [
+						"exam-management",
+						"exams"
+					],
+					"query": [
+						{
+							"key": "tenant_id",
+							"value": "{{tenant_id}}"
+						},
+						{
+							"key": "status",
+							"value": "active"
+						},
+						{
+							"key": "skip",
+							"value": "0"
+						},
+						{
+							"key": "limit",
+							"value": "50"
+						}
+					]
+				}
+			}
+		}
+	]
+}

@@ -15,4 +15,8 @@ JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production
 # AI Services
 PERPLEXITY_API_KEY=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
 
+
+test_sprite
+sk-user-SkBn2aaGJflXc5SL9VV82NJICbzmro4C6cUeZ4sa_lZXnnbDI-CLXvhPnAbLSvw94v1n7B6eIgAO-02eZgksSbgWcq2aqvr0IbkJqGmwNdFFMqovM7murEUMYUWYQ361b8I
+
 PORT=8000

@@ -4,17 +4,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import UUID
 from enum import Enum
-
-class DifficultyLevel(str, Enum):
-    EASY = "easy"
-    MEDIUM = "medium"
-    HARD = "hard"
-
-class QuestionType(str, Enum):
-    MULTIPLE_CHOICE = "multiple_choice"
-    TRUE_FALSE = "true_false"
-    SHORT_ANSWER = "short_answer"
-    ESSAY = "essay"
+from ...models.tenant_specific.assesment.quiz_question_models import DifficultyLevel, QuestionType
 
 class TemplateType(str, Enum):
     MULTIPLE_CHOICE = "multiple_choice"
@@ -66,12 +56,12 @@ class QuestionResponse(BaseModel):
     question_type: QuestionType
     difficulty_level: DifficultyLevel
     options: Optional[Dict[str, str]]
+    correct_answer: str
     explanation: Optional[str]
     points: int
     time_limit: Optional[int]
-    version: int
-    original_source: Optional[str]
-    categories: Optional[List[CategoryResponse]] = None
+    version: Optional[int] = None
+    original_source: Optional[str] = None
     created_at: datetime
 
 class QuestionForQuiz(BaseModel):
@@ -85,7 +75,7 @@ class QuestionForQuiz(BaseModel):
 # Quiz Schemas
 class QuizCreate(BaseModel):
     topic_id: UUID
-    class_id: Optional[UUID] = None
+    class_ids: Optional[List[UUID]] = None  # Support multiple classes
     title: str = Field(..., max_length=200)
     description: Optional[str] = None
     instructions: Optional[str] = None
@@ -99,7 +89,7 @@ class QuizCreate(BaseModel):
 class QuizResponse(BaseModel):
     id: UUID
     topic_id: UUID
-    class_id: Optional[UUID]
+    class_ids: Optional[List[UUID]] = None
     teacher_id: UUID
     title: str
     description: Optional[str]
@@ -154,6 +144,38 @@ class QuizResultResponse(BaseModel):
     quiz_title: str
     topic_name: str
     answers: List[Dict[str, Any]]
+
+class QuizStatusUpdate(BaseModel):
+    is_active: bool
+
+class GradeShortAnswer(BaseModel):
+    points_awarded: int = Field(..., ge=0)
+
+class PublishResults(BaseModel):
+    attempt_ids: List[UUID]  # List of attempt IDs to publish results for
+
+class InlineQuestion(BaseModel):
+    question_text: str
+    question_type: QuestionType
+    difficulty_level: DifficultyLevel = DifficultyLevel.MEDIUM
+    options: Optional[Dict[str, str]] = None
+    correct_answer: str
+    explanation: Optional[str] = None
+    points: int = Field(default=1, ge=1)
+
+class QuizCreateWithQuestions(BaseModel):
+    class_ids: Optional[List[UUID]] = None
+    title: str = Field(..., max_length=200)
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    questions: List[InlineQuestion]
+    time_limit: Optional[int] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    allow_retakes: bool = False
+    show_results_immediately: bool = True
+    subject: str = Field(..., max_length=50)
+    grade_level: Optional[int] = Field(None, ge=1, le=12)
 
 class CategoryCreate(BaseModel):
     name: str = Field(..., max_length=100)

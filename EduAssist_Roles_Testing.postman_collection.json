@@ -1,0 +1,686 @@
+{
+	"info": {
+		"_postman_id": "edu-roles-test-collection",
+		"name": "EduAssist Roles Testing",
+		"description": "Complete testing collection for School Authorities, Teachers, and Students management",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "tenant_id",
+			"value": "351e3b19-0c37-4e48-a06d-3ceaa7e584c2",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "School Authorities",
+			"item": [
+				{
+					"name": "Get All Authorities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/school-authorities?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Authority by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/school-authorities/bcff01a3-c76d-4c30-bd23-9468446b10fd?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities", "bcff01a3-c76d-4c30-bd23-9468446b10fd"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create New Authority",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"authority_id\": \"AUTH_TEST_001\",\n  \"name\": \"Test Authority\",\n  \"email\": \"test.authority@school.edu\",\n  \"position\": \"Test Principal\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/school-authorities?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Authority",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated John Smith\",\n  \"email\": \"john.smith.updated@newschool.edu\",\n  \"position\": \"Senior Vice Principal\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/school-authorities/bcff01a3-c76d-4c30-bd23-9468446b10fd?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities", "bcff01a3-c76d-4c30-bd23-9468446b10fd"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Authority",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/school-authorities/402c77ef-94ad-4f5a-a4fb-ace0d9a9945e?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities", "402c77ef-94ad-4f5a-a4fb-ace0d9a9945e"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Active Authorities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/school-authorities?tenant_id={{tenant_id}}&status=active",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "active"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Search Authorities by Position",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/school-authorities?tenant_id={{tenant_id}}&position=Principal",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "position",
+									"value": "Principal"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Teachers",
+			"item": [
+				{
+					"name": "Get All Teachers",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/teachers?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Teacher by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/teachers/dc8f9629-48d4-45a3-8673-8a6fc5c162bf?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers", "dc8f9629-48d4-45a3-8673-8a6fc5c162bf"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create New Teacher",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"teacher_id\": \"TCH_TEST_001\",\n  \"name\": \"Sarah Johnson\",\n  \"email\": \"sarah.johnson@school.edu\",\n  \"position\": \"Mathematics Teacher\",\n  \"department\": \"Mathematics\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/teachers?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Teacher",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Teacher Name\",\n  \"email\": \"updated.teacher@school.edu\",\n  \"position\": \"Senior Mathematics Teacher\",\n  \"department\": \"Mathematics\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/teachers/dc8f9629-48d4-45a3-8673-8a6fc5c162bf?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers", "dc8f9629-48d4-45a3-8673-8a6fc5c162bf"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Teacher",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/teachers/89c8d065-6bd2-490c-8b22-2809a64eca84?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers", "89c8d065-6bd2-490c-8b22-2809a64eca84"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Active Teachers",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/teachers?tenant_id={{tenant_id}}&status=active",
+							"host": ["{{base_url}}"],
+							"path": ["teachers"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "active"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Teachers on Leave",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/teachers?tenant_id={{tenant_id}}&status=on_leave",
+							"host": ["{{base_url}}"],
+							"path": ["teachers"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "on_leave"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Students",
+			"item": [
+				{
+					"name": "Get All Students",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Student by ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students/65bee12c-a64d-46ff-9f51-7c1b80832a1a?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students", "65bee12c-a64d-46ff-9f51-7c1b80832a1a"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create New Student",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"student_id\": \"STU_TEST_001\",\n  \"name\": \"Test Student\",\n  \"email\": \"test.student@school.edu\",\n  \"grade_level\": 10,\n  \"section\": \"A\",\n  \"admission_number\": \"ADM2025TEST001\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Update Student",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Riya Verma\",\n  \"email\": \"riya.verma.updated@example.com\",\n  \"grade_level\": 12,\n  \"section\": \"B\",\n  \"admission_number\": \"ADM202501\",\n  \"status\": \"active\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/students/65bee12c-a64d-46ff-9f51-7c1b80832a1a?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students", "65bee12c-a64d-46ff-9f51-7c1b80832a1a"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Student",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students/57257108-4004-40d1-a0a9-adedf6f17f86?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students", "57257108-4004-40d1-a0a9-adedf6f17f86"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Active Students",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}&status=active",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "active"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Students by Grade",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}&grade_level=12",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "grade_level",
+									"value": "12"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Students by Section",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}&section=A",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "section",
+									"value": "A"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Suspended Students",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}&status=suspended",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "suspended"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Filter Expelled Students",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/students?tenant_id={{tenant_id}}&status=expelled",
+							"host": ["{{base_url}}"],
+							"path": ["students"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "status",
+									"value": "expelled"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Bulk Operations",
+			"item": [
+				{
+					"name": "Bulk Create Authorities",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n  {\n    \"authority_id\": \"BULK_AUTH_001\",\n    \"name\": \"Bulk Authority 1\",\n    \"email\": \"bulk1@school.edu\",\n    \"position\": \"Assistant Principal\",\n    \"status\": \"active\"\n  },\n  {\n    \"authority_id\": \"BULK_AUTH_002\",\n    \"name\": \"Bulk Authority 2\",\n    \"email\": \"bulk2@school.edu\",\n    \"position\": \"Department Head\",\n    \"status\": \"active\"\n  }\n]"
+						},
+						"url": {
+							"raw": "{{base_url}}/school-authorities/bulk?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["school-authorities", "bulk"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Bulk Create Teachers",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n  {\n    \"teacher_id\": \"BULK_TCH_001\",\n    \"name\": \"Bulk Teacher 1\",\n    \"email\": \"bulkteacher1@school.edu\",\n    \"position\": \"Science Teacher\",\n    \"department\": \"Science\",\n    \"status\": \"active\"\n  },\n  {\n    \"teacher_id\": \"BULK_TCH_002\",\n    \"name\": \"Bulk Teacher 2\",\n    \"email\": \"bulkteacher2@school.edu\",\n    \"position\": \"English Teacher\",\n    \"department\": \"English\",\n    \"status\": \"active\"\n  }\n]"
+						},
+						"url": {
+							"raw": "{{base_url}}/teachers/bulk?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["teachers", "bulk"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Bulk Create Students",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n  {\n    \"student_id\": \"BULK_STU_001\",\n    \"name\": \"Bulk Student 1\",\n    \"email\": \"bulkstudent1@school.edu\",\n    \"grade_level\": 9,\n    \"section\": \"A\",\n    \"admission_number\": \"BULK001\",\n    \"status\": \"active\"\n  },\n  {\n    \"student_id\": \"BULK_STU_002\",\n    \"name\": \"Bulk Student 2\",\n    \"email\": \"bulkstudent2@school.edu\",\n    \"grade_level\": 10,\n    \"section\": \"B\",\n    \"admission_number\": \"BULK002\",\n    \"status\": \"active\"\n  }\n]"
+						},
+						"url": {
+							"raw": "{{base_url}}/students/bulk?tenant_id={{tenant_id}}",
+							"host": ["{{base_url}}"],
+							"path": ["students", "bulk"],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "System Health",
+			"item": [
+				{
+					"name": "Health Check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": ["{{base_url}}"],
+							"path": ["health"]
+						}
+					}
+				},
+				{
+					"name": "System Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/system/status",
+							"host": ["{{base_url}}"],
+							"path": ["system", "status"]
+						}
+					}
+				},
+				{
+					"name": "Root Endpoint",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/",
+							"host": ["{{base_url}}"],
+							"path": [""]
+						}
+					}
+				}
+			]
+		}
+	]
+}

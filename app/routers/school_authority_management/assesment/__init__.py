@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from . import (
     quiz_management_routes as quiz,
     ai_quiz_generation_routes as ai_quiz,
+    ai_quiz_management_routes as ai_quiz_mgmt,
     ai_student_analytics_routes as ai_learning,
     cbse_curriculum_routes as cbse_content,
     cbse_quiz_platform_routes as cbse_quiz,
@@ -16,6 +17,7 @@ assessment_router = APIRouter(prefix="/assessment", tags=["Assessment System"])
 # Include all assessment sub-routers
 assessment_router.include_router(quiz.router)
 assessment_router.include_router(ai_quiz.router)
+assessment_router.include_router(ai_quiz_mgmt.router)
 assessment_router.include_router(ai_learning.router)
 assessment_router.include_router(cbse_content.router)
 assessment_router.include_router(cbse_quiz.router)

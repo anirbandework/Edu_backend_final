@@ -15,7 +15,7 @@ from sqlalchemy import text  # ADDED MISSING IMPORT
 
 from .core.config import settings
 from .core.database import engine, background_engine, close_db_connections, get_pool_status
-from .core.cache import cache_manager
+from .core.cache import cache_service
 from .routers.health import router as health_router
 from .routers.tenant import router as tenant_router
 from .routers.school_authority import router as school_authority_router
@@ -29,7 +29,13 @@ from .routers.school_authority_management.timetable import router as timetable_r
 from .routers.chat.chat_router import router as chat_router
 from .routers.chat.websocket_router import router as websocket_router
 from .routers.school_authority_management.assesment import assessment_router
-from .core.error_handlers import assessment_exception_handler, general_exception_handler, AssessmentException
+from .routers.school_authority_management.exam_management import router as exam_router
+from .routers.user_role import router as user_role_router
+from .routers.auth import router as auth_router
+from .routers.role_management.role_router import router as role_management_router
+from .routers.page_permissions import router as page_permissions_router
+from .routers.rbac_management import router as rbac_management_router
+from .core.exceptions import eduassist_exception_handler, general_exception_handler, EduAssistException
 
 
 logging.basicConfig(
@@ -46,7 +52,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize cache manager
     try:
-        await cache_manager.initialize()
+        await cache_service.initialize()
         logger.info("Cache manager initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize cache: {e}")
@@ -80,7 +86,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down EduAssist Backend API")
     
     try:
-        await cache_manager.close()
+        await cache_service.close()
         logger.info("Cache manager closed")
     except Exception as e:
         logger.error(f"Error closing cache manager: {e}")
@@ -112,10 +118,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content={"detail": exc.detail}
     )
 
-# Assessment system exception handlers
-@app.exception_handler(AssessmentException)
-async def handle_assessment_exception(request: Request, exc: AssessmentException):
-    return await assessment_exception_handler(request, exc)
+# EduAssist system exception handlers
+@app.exception_handler(EduAssistException)
+async def handle_eduassist_exception(request: Request, exc: EduAssistException):
+    return await eduassist_exception_handler(request, exc)
 
 # Global exception handler for all other exceptions
 @app.exception_handler(Exception)
@@ -197,6 +203,12 @@ app.include_router(timetable_router)
 app.include_router(chat_router)
 app.include_router(websocket_router)
 app.include_router(assessment_router)
+app.include_router(exam_router)
+app.include_router(auth_router)
+app.include_router(user_role_router)
+app.include_router(role_management_router)
+app.include_router(page_permissions_router)
+app.include_router(rbac_management_router)
 
 
 

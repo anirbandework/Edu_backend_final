@@ -1,0 +1,531 @@
+{
+  "info": {
+    "name": "Quiz API Tests",
+    "description": "Complete test collection for Quiz/Assessment APIs",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "tenant_id",
+      "value": "351e3b19-0c37-4e48-a06d-3ceaa7e584c2"
+    },
+    {
+      "key": "school_authority_id",
+      "value": "25227d19-074b-4481-b376-53e6d7b85676"
+    },
+    {
+      "key": "teacher_id",
+      "value": "4f2be8ad-999e-4e40-a6e1-e0e55485a2e0"
+    },
+    {
+      "key": "student_id",
+      "value": "27d33111-7c42-4e34-953b-5e92b2f6537d"
+    },
+    {
+      "key": "class_id",
+      "value": "71a12956-ac40-400d-94b3-c318beb40f58"
+    },
+    {
+      "key": "topic_id",
+      "value": ""
+    },
+    {
+      "key": "question_id_1",
+      "value": ""
+    },
+    {
+      "key": "question_id_2",
+      "value": ""
+    },
+    {
+      "key": "quiz_id",
+      "value": ""
+    },
+    {
+      "key": "attempt_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Create Topic",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('topic_id', response.id);",
+              "    console.log('Topic ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Mathematics - Algebra\",\n  \"description\": \"Basic algebraic concepts and equations\",\n  \"subject\": \"Mathematics\",\n  \"grade_level\": 10\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/topics?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "topics"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. Get Topics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/topics?tenant_id={{tenant_id}}&subject=Mathematics&grade_level=10",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "topics"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            },
+            {
+              "key": "subject",
+              "value": "Mathematics"
+            },
+            {
+              "key": "grade_level",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "3. Create Question 1 (Multiple Choice)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('question_id_1', response.id);",
+              "    console.log('Question 1 ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic_id\": \"{{topic_id}}\",\n  \"question_text\": \"What is the value of x in the equation 2x + 5 = 15?\",\n  \"question_type\": \"multiple_choice\",\n  \"difficulty_level\": \"easy\",\n  \"options\": {\n    \"A\": \"5\",\n    \"B\": \"10\",\n    \"C\": \"7.5\",\n    \"D\": \"15\"\n  },\n  \"correct_answer\": \"A\",\n  \"explanation\": \"Solving: 2x + 5 = 15, so 2x = 10, therefore x = 5\",\n  \"points\": 2\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/questions?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "questions"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "4. Create Question 2 (True/False)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('question_id_2', response.id);",
+              "    console.log('Question 2 ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic_id\": \"{{topic_id}}\",\n  \"question_text\": \"Is the equation x² - 4 = 0 a quadratic equation?\",\n  \"question_type\": \"true_false\",\n  \"difficulty_level\": \"medium\",\n  \"options\": {\n    \"True\": \"Yes, it is quadratic\",\n    \"False\": \"No, it is not quadratic\"\n  },\n  \"correct_answer\": \"True\",\n  \"explanation\": \"Any equation with x² as the highest power is quadratic\",\n  \"points\": 1\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/questions?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "questions"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. Get Questions By Topic",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/topics/{{topic_id}}/questions?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "topics", "{{topic_id}}", "questions"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "6. Create Quiz",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('quiz_id', response.id);",
+              "    console.log('Quiz ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic_id\": \"{{topic_id}}\",\n  \"class_ids\": [\"{{class_id}}\"],\n  \"title\": \"Algebra Basics Quiz\",\n  \"description\": \"Test your understanding of basic algebraic concepts\",\n  \"instructions\": \"Answer all questions. You have 10 minutes to complete this quiz.\",\n  \"question_ids\": [\"{{question_id_1}}\", \"{{question_id_2}}\"],\n  \"time_limit\": 600,\n  \"start_time\": \"2024-01-01T00:00:00\",\n  \"end_time\": \"2024-12-31T23:59:59\",\n  \"allow_retakes\": true,\n  \"show_results_immediately\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes?tenant_id={{tenant_id}}&teacher_id={{teacher_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            },
+            {
+              "key": "teacher_id",
+              "value": "{{teacher_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "7. Get Quiz For Student",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes/{{quiz_id}}/student?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes", "{{quiz_id}}", "student"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "8. Get Student Available Quizzes",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/students/{{student_id}}/available-quizzes?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "students", "{{student_id}}", "available-quizzes"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "9. Start Quiz Attempt",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('attempt_id', response.id);",
+              "    console.log('Attempt ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"quiz_id\": \"{{quiz_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/attempts/start?tenant_id={{tenant_id}}&student_id={{student_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "attempts", "start"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            },
+            {
+              "key": "student_id",
+              "value": "{{student_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10. Submit Quiz Attempt",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"attempt_id\": \"{{attempt_id}}\",\n  \"answers\": [\n    {\n      \"question_id\": \"{{question_id_1}}\",\n      \"student_answer\": \"A\"\n    },\n    {\n      \"question_id\": \"{{question_id_2}}\",\n      \"student_answer\": \"True\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/attempts/submit?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "attempts", "submit"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "11. Get Student Quiz Results",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/students/{{student_id}}/results?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "students", "{{student_id}}", "results"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "12. Get Teacher Quizzes",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/teachers/{{teacher_id}}/quizzes?tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "teachers", "{{teacher_id}}", "quizzes"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "13. Get Quiz Results (Teacher)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes/{{quiz_id}}/results?tenant_id={{tenant_id}}&teacher_id={{teacher_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes", "{{quiz_id}}", "results"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            },
+            {
+              "key": "teacher_id",
+              "value": "{{teacher_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "14. Update Quiz Status (Toggle Active)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"is_active\": false\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes/{{quiz_id}}/status?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes", "{{quiz_id}}", "status"],
+          "query": [
+            {
+              "key": "teacher_id",
+              "value": "{{teacher_id}}"
+            },
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "15. Create Quiz With Inline Questions",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    const response = pm.response.json();",
+              "    pm.collectionVariables.set('quiz_id', response.id);",
+              "    console.log('Quiz ID saved:', response.id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"class_ids\": [\"{{class_id}}\"],\n  \"title\": \"Mixed Format Quiz\",\n  \"description\": \"Quiz with multiple question types\",\n  \"instructions\": \"Answer all questions carefully\",\n  \"subject\": \"Mathematics\",\n  \"grade_level\": 10,\n  \"time_limit\": 900,\n  \"questions\": [\n    {\n      \"question_text\": \"What is 2 + 2?\",\n      \"question_type\": \"multiple_choice\",\n      \"difficulty_level\": \"easy\",\n      \"options\": {\n        \"A\": \"3\",\n        \"B\": \"4\",\n        \"C\": \"5\",\n        \"D\": \"6\"\n      },\n      \"correct_answer\": \"B\",\n      \"explanation\": \"Basic addition\",\n      \"points\": 1\n    },\n    {\n      \"question_text\": \"Is 10 greater than 5?\",\n      \"question_type\": \"true_false\",\n      \"difficulty_level\": \"easy\",\n      \"options\": {\n        \"True\": \"Yes\",\n        \"False\": \"No\"\n      },\n      \"correct_answer\": \"True\",\n      \"points\": 1\n    },\n    {\n      \"question_text\": \"Explain the Pythagorean theorem\",\n      \"question_type\": \"short_answer\",\n      \"difficulty_level\": \"medium\",\n      \"correct_answer\": \"a² + b² = c²\",\n      \"explanation\": \"The square of the hypotenuse equals the sum of squares of the other two sides\",\n      \"points\": 3\n    }\n  ],\n  \"allow_retakes\": true,\n  \"show_results_immediately\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes/create-with-questions?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes", "create-with-questions"],
+          "query": [
+            {
+              "key": "teacher_id",
+              "value": "{{teacher_id}}"
+            },
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "16. Delete Quiz (Teacher)",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/assessment/quiz/quizzes/{{quiz_id}}?tenant_id={{tenant_id}}&teacher_id={{teacher_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["assessment", "quiz", "quizzes", "{{quiz_id}}"],
+          "query": [
+            {
+              "key": "tenant_id",
+              "value": "{{tenant_id}}"
+            },
+            {
+              "key": "teacher_id",
+              "value": "{{teacher_id}}"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

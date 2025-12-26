@@ -1,0 +1,714 @@
+{
+	"info": {
+		"_postman_id": "complete-ai-quiz-workflow",
+		"name": "Complete AI Quiz Workflow",
+		"description": "Full teacher-student AI quiz workflow including creation, taking, grading, and analytics",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "TEACHER WORKFLOW",
+			"item": [
+				{
+					"name": "1. Create AI Quiz from Scratch",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"title\": \"Physics - Newton's Laws Assessment\",\n  \"description\": \"AI-generated comprehensive assessment on Newton's three laws of motion\",\n  \"instructions\": \"Answer all questions carefully. You have 45 minutes to complete this quiz.\",\n  \"class_ids\": [\"{{class_id}}\"],\n  \"subject\": \"Physics\",\n  \"grade_level\": 11,\n  \"question_types\": [\"multiple_choice\", \"short_answer\", \"true_false\"],\n  \"difficulty_distribution\": {\n    \"easy\": 30,\n    \"medium\": 50,\n    \"hard\": 20\n  },\n  \"total_questions\": 15,\n  \"total_points\": 100,\n  \"time_limit\": 45,\n  \"learning_objectives\": \"Students should understand and apply Newton's three laws of motion to real-world scenarios\",\n  \"topics_to_cover\": [\"First Law - Inertia\", \"Second Law - F=ma\", \"Third Law - Action-Reaction\"],\n  \"allow_retakes\": false,\n  \"show_results_immediately\": false\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/create-quiz?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"create-quiz"
+							],
+							"query": [
+								{
+									"key": "teacher_id",
+									"value": "{{teacher_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "2. Get AI Quiz Templates",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/templates?subject=Physics&grade_level=11&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"templates"
+							],
+							"query": [
+								{
+									"key": "subject",
+									"value": "Physics"
+								},
+								{
+									"key": "grade_level",
+									"value": "11"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "3. Generate Quiz from Template",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"template_name\": \"Physics Assessment Template\",\n  \"subject\": \"Physics\",\n  \"grade_level\": 11,\n  \"quiz_type\": \"assessment\",\n  \"duration_minutes\": 45,\n  \"difficulty_level\": \"medium\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/generate-from-template?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}&class_ids={{class_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"generate-from-template"
+							],
+							"query": [
+								{
+									"key": "teacher_id",
+									"value": "{{teacher_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "class_ids",
+									"value": "{{class_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "4. Get Teacher AI Quiz Dashboard",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/teacher/{{teacher_id}}/dashboard?tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"teacher",
+								"{{teacher_id}}",
+								"dashboard"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "5. Get Teacher's AI Quizzes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/teacher/{{teacher_id}}/quizzes?tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"teacher",
+								"{{teacher_id}}",
+								"quizzes"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "6. Get Class Analytics",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/class-analytics/{{ai_quiz_id}}/{{class_id}}?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"class-analytics",
+								"{{ai_quiz_id}}",
+								"{{class_id}}"
+							],
+							"query": [
+								{
+									"key": "teacher_id",
+									"value": "{{teacher_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "7. Update Quiz Status",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/quiz/{{ai_quiz_id}}/status?is_active=true&teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"quiz",
+								"{{ai_quiz_id}}",
+								"status"
+							],
+							"query": [
+								{
+									"key": "is_active",
+									"value": "true"
+								},
+								{
+									"key": "teacher_id",
+									"value": "{{teacher_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "STUDENT WORKFLOW",
+			"item": [
+				{
+					"name": "1. Get Available AI Quizzes",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/student/{{student_id}}/available-quizzes?tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"student",
+								"{{student_id}}",
+								"available-quizzes"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "2. Get AI Quiz for Student",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/student/{{ai_quiz_id}}?student_id={{student_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"student",
+								"{{ai_quiz_id}}"
+							],
+							"query": [
+								{
+									"key": "student_id",
+									"value": "{{student_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "3. Start AI Quiz Attempt",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{ai_quiz_id}}\",\n  \"use_ai_assistance\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/start-attempt?student_id={{student_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"start-attempt"
+							],
+							"query": [
+								{
+									"key": "student_id",
+									"value": "{{student_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "4. Get AI Hint During Quiz",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"attempt_id\": \"{{ai_attempt_id}}\",\n  \"question_id\": \"{{question_id}}\",\n  \"student_answer_so_far\": \"I think it has something to do with force and motion...\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/get-hint?student_id={{student_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"get-hint"
+							],
+							"query": [
+								{
+									"key": "student_id",
+									"value": "{{student_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "5. Submit Quiz Attempt (Regular API)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"attempt_id\": \"{{ai_attempt_id}}\",\n  \"answers\": [\n    {\n      \"question_id\": \"{{question_id}}\",\n      \"student_answer\": \"A\"\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/quiz/attempts/submit?tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"quiz",
+								"attempts",
+								"submit"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "6. Get AI Quiz Results",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/results/{{ai_attempt_id}}?student_id={{student_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"results",
+								"{{ai_attempt_id}}"
+							],
+							"query": [
+								{
+									"key": "student_id",
+									"value": "{{student_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "7. Get Student AI Quiz History",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/student/{{student_id}}/history?tenant_id={{tenant_id}}&subject=Physics",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"student",
+								"{{student_id}}",
+								"history"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "subject",
+									"value": "Physics"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "AI GENERATION & GRADING",
+			"item": [
+				{
+					"name": "1. Generate Questions - Multiple Choice",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"topic\": \"Newton's Laws of Motion\",\n  \"subject\": \"Physics\",\n  \"grade_level\": 11,\n  \"question_type\": \"multiple_choice\",\n  \"difficulty\": \"medium\",\n  \"count\": 5,\n  \"learning_objectives\": \"Apply Newton's laws to solve physics problems\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz/generate-questions?tenant_id={{tenant_id}}&auto_save=false",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz",
+								"generate-questions"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "auto_save",
+									"value": "false"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "2. Grade Subjective Answer with AI",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"question_text\": \"Explain Newton's First Law of Motion and provide a real-world example.\",\n  \"correct_answer\": \"Newton's First Law states that an object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. Example: A book on a table remains stationary until pushed.\",\n  \"student_answer\": \"Objects don't move unless something pushes them. Like a car needs gas to move and brakes to stop.\",\n  \"max_points\": 10,\n  \"rubric\": \"Award full points for correct law statement and relevant example. Partial credit for incomplete understanding.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz/grade-subjective",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz",
+								"grade-subjective"
+							]
+						}
+					}
+				},
+				{
+					"name": "3. Enhanced AI Grading for Attempt",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz/enhanced-grading/{{ai_attempt_id}}?tenant_id={{tenant_id}}&use_ai_grading=true",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz",
+								"enhanced-grading",
+								"{{ai_attempt_id}}"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								},
+								{
+									"key": "use_ai_grading",
+									"value": "true"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "4. Analyze Quiz Performance with AI",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"quiz_id\": \"{{ai_quiz_id}}\",\n  \"class_id\": \"{{class_id}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz/analyze-performance?tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz",
+								"analyze-performance"
+							],
+							"query": [
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "QUIZ MANAGEMENT",
+			"item": [
+				{
+					"name": "1. Delete AI Quiz",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/quiz/{{ai_quiz_id}}?teacher_id={{teacher_id}}&tenant_id={{tenant_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"quiz",
+								"{{ai_quiz_id}}"
+							],
+							"query": [
+								{
+									"key": "teacher_id",
+									"value": "{{teacher_id}}"
+								},
+								{
+									"key": "tenant_id",
+									"value": "{{tenant_id}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "2. Health Check - AI Quiz Management",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/assessment/ai-quiz-management/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"assessment",
+								"ai-quiz-management",
+								"health"
+							]
+						}
+					}
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://192.168.1.8:8000",
+			"type": "string"
+		},
+		{
+			"key": "tenant_id",
+			"value": "351e3b19-0c37-4e48-a06d-3ceaa7e584c2",
+			"type": "string"
+		},
+		{
+			"key": "school_authority_id",
+			"value": "25227d19-074b-4481-b376-53e6d7b85676",
+			"type": "string"
+		},
+		{
+			"key": "teacher_id",
+			"value": "4f2be8ad-999e-4e40-a6e1-e0e55485a2e0",
+			"type": "string"
+		},
+		{
+			"key": "student_id",
+			"value": "27d33111-7c42-4e34-953b-5e92b2f6537d",
+			"type": "string"
+		},
+		{
+			"key": "class_id",
+			"value": "71a12956-ac40-400d-94b3-c318beb40f58",
+			"type": "string"
+		},
+		{
+			"key": "ai_quiz_id",
+			"value": "REPLACE_WITH_AI_QUIZ_ID",
+			"type": "string",
+			"description": "Get this from Create AI Quiz response"
+		},
+		{
+			"key": "ai_attempt_id",
+			"value": "REPLACE_WITH_AI_ATTEMPT_ID",
+			"type": "string",
+			"description": "Get this from Start AI Quiz Attempt response"
+		},
+		{
+			"key": "question_id",
+			"value": "REPLACE_WITH_QUESTION_ID",
+			"type": "string",
+			"description": "Get this from quiz questions"
+		}
+	]
+}

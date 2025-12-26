@@ -9,6 +9,7 @@ from .quiz_validation_schemas import QuestionType, DifficultyLevel
 # AI Question Generation
 class QuestionGenerationRequest(BaseModel):
     topic: str = Field(..., max_length=200)
+    topic_id: Optional[UUID] = None  # Added topic_id for database lookup
     subject: str = Field(..., max_length=100)
     grade_level: int = Field(..., ge=1, le=12)
     question_type: QuestionType
@@ -26,9 +27,11 @@ class GeneratedQuestion(BaseModel):
 class QuestionGenerationResponse(BaseModel):
     questions: List[GeneratedQuestion]
     topic: str
+    topic_name: Optional[str] = None  # Added topic name
     subject: str
     grade_level: int
     total_generated: int
+    generation_metadata: Optional[Dict[str, Any]] = None  # Added metadata
 
 # Smart Quiz Assembly
 class QuizAssemblyRequest(BaseModel):
@@ -46,6 +49,9 @@ class QuizAssemblyResponse(BaseModel):
     total_points: int
     estimated_duration: int
     recommendations: str
+    question_details: Optional[Dict[str, Any]] = None
+    topic_name: Optional[str] = None  # Added topic name
+    quiz_title: Optional[str] = None  # Added quiz title suggestion
 
 # AI Grading
 class SubjectiveGradingRequest(BaseModel):
@@ -87,12 +93,15 @@ class PerformanceAnalysisResponse(BaseModel):
     overall_stats: Dict[str, Any]
     weak_areas: List[str]
     strong_areas: List[str]
-    at_risk_students: List[UUID]
-    top_performers: List[UUID]
+    at_risk_students: List[Dict[str, Any]]  # Now includes student names
+    top_performers: List[Dict[str, Any]]    # Now includes student names
     recommendations: List[str]
     question_analysis: Dict[str, Any]
     class_average: float
     pass_rate: float
+    quiz_name: Optional[str] = None  # Added quiz name
+    class_name: Optional[str] = None  # Added class name
+    topic_name: Optional[str] = None  # Added topic name
 
 # Student Learning Insights
 class StudentInsightsRequest(BaseModel):
@@ -102,6 +111,7 @@ class StudentInsightsRequest(BaseModel):
 
 class StudentInsightsResponse(BaseModel):
     student_id: UUID
+    student_name: Optional[str] = None
     overall_performance: Dict[str, Any]
     subject_breakdown: Dict[str, Any]
     learning_trends: List[str]
@@ -119,6 +129,7 @@ class StudyRecommendationRequest(BaseModel):
 
 class StudyRecommendationResponse(BaseModel):
     student_id: UUID
+    student_name: Optional[str] = None
     priority_topics: List[Dict[str, Any]]
     study_activities: List[Dict[str, Any]]
     weekly_schedule: Dict[str, List[str]]
@@ -134,6 +145,7 @@ class WeaknessAnalysisRequest(BaseModel):
 
 class WeaknessAnalysisResponse(BaseModel):
     student_id: UUID
+    student_name: Optional[str] = None
     knowledge_gaps: List[Dict[str, Any]]
     learning_patterns: List[str]
     skill_deficiencies: List[str]
@@ -151,6 +163,7 @@ class ExamPrepRequest(BaseModel):
 
 class ExamPrepResponse(BaseModel):
     student_id: UUID
+    student_name: Optional[str] = None
     exam_date: Optional[date]
     study_schedule: Dict[str, Any]
     topic_priorities: List[Dict[str, Any]]
@@ -168,6 +181,7 @@ class PerformancePredictionRequest(BaseModel):
 
 class PerformancePredictionResponse(BaseModel):
     student_id: UUID
+    student_name: Optional[str] = None
     predicted_score: float
     confidence_level: float
     performance_trend: str
@@ -190,6 +204,10 @@ class ReportGenerationResponse(BaseModel):
     summary: str
     recommendations: List[str]
     charts_data: Optional[Dict[str, Any]] = None
+    report_title: Optional[str] = None  # Added report title
+    student_name: Optional[str] = None  # Added student name for student reports
+    class_name: Optional[str] = None  # Added class name for class reports
+    generated_for: Optional[str] = None  # Added context (e.g., "John Doe - Mathematics Progress")
 
 # Intervention Recommendations
 class InterventionRequest(BaseModel):

@@ -3,7 +3,7 @@
 import contextlib
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 import logging
 
@@ -14,43 +14,29 @@ logger = logging.getLogger(__name__)
 # Enhanced engine configuration for bulk operations and background tasks
 engine = create_async_engine(
     settings.database_url,
-    poolclass=QueuePool,
-    # Optimized pool settings for bulk operations
-    pool_size=15,  # Increased from 5 for bulk operations
-    max_overflow=25,  # Increased from 10 for concurrent bulk tasks
-    pool_timeout=60,  # Increased timeout for bulk operations
-    pool_recycle=1800,  # Keep 30 minutes - good for Aurora
-    pool_pre_ping=True,  # Essential for Aurora connections
     echo=(settings.environment == 'development'),
-    # Aurora and bulk-operation optimized connection arguments
     connect_args={
-        "command_timeout": 300,  # 5 minutes for bulk operations
+        "command_timeout": 300,
         "server_settings": {
-            "jit": "off",  # Disable JIT for faster startup
+            "jit": "off",
             "application_name": "eduassist_api",
-            "statement_timeout": "300s",  # 5 minutes for bulk operations
-            "idle_in_transaction_session_timeout": "60s",  # Prevent hanging transactions
-            "lock_timeout": "30s",  # Prevent long waits on locks
+            "statement_timeout": "300s",
+            "idle_in_transaction_session_timeout": "60s",
+            "lock_timeout": "30s",
         }
     }
 )
 
-# Separate engine for background tasks to avoid pool contention
+# Separate engine for background tasks
 background_engine = create_async_engine(
     settings.database_url,
-    poolclass=QueuePool,
-    pool_size=8,  # Dedicated pool for background tasks
-    max_overflow=12,
-    pool_timeout=120,  # Longer timeout for background operations
-    pool_recycle=3600,  # 1 hour recycle for long-running tasks
-    pool_pre_ping=True,
-    echo=False,  # Background tasks don't need echo
+    echo=False,
     connect_args={
-        "command_timeout": 600,  # 10 minutes for background bulk operations
+        "command_timeout": 600,
         "server_settings": {
             "jit": "off",
             "application_name": "eduassist_background",
-            "statement_timeout": "600s",  # 10 minutes for bulk background tasks
+            "statement_timeout": "600s",
             "idle_in_transaction_session_timeout": "120s",
         }
     }

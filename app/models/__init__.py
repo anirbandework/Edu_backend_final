@@ -19,4 +19,12 @@ from .tenant_specific.timetable import (
     TimetableAuditLog
 )
 
+# Exam management models
+from .tenant_specific.exam_management import (
+    Exam, ExamClass, StudentExamMark, ExamTemplate, BulkMarkingBatch
+)
+
+# Role management models
+from .role_management import Role, UserRole
+
 # This ensures all models are loaded when importing models
