@@ -1,0 +1,163 @@
+"""Module + tab catalog — the code source-of-truth for RBAC (like indusinfotechs'
+STAFF_MODULE_KEYS / ADMIN_MODULE_KEYS / MODULE_TABS).
+
+A *module* is a feature/page; *tabs* are sub-sections within it. Each module
+declares its `audience` (which user types it applies to). Effective permissions
+come from intersecting the tenant ceiling with the user's role (see service.py).
+"""
+from __future__ import annotations
+
+# canonical user types (match the identity tables / JWT role claim)
+AUTHORITY = "school_authority"
+TEACHER = "teacher"
+STUDENT = "student"
+# "staff" = the unified dynamic-role user type. A staff role may be granted ANY
+# module across every section (it is not audience-restricted); its pages come
+# from an explicit allow-list of RoleModulePermission rows.
+STAFF = "staff"
+USER_TYPES = (AUTHORITY, TEACHER, STUDENT)
+# user_types that an admin may create an rbac_role for (staff included)
+ROLE_USER_TYPES = (AUTHORITY, TEACHER, STUDENT, STAFF)
+
+# Functional sections — used by the page-picker UI to group modules so an admin
+# can compose a custom role from pages across areas.
+SEC_CORE = "Core"
+SEC_ADMIN = "Administration"
+SEC_ACADEMICS = "Academics"
+SEC_COMMS = "Communication"
+
+# Audience groups — the OTHER way the page-picker can group: "who is this page
+# meant for". Purely presentational; granting is still unrestricted cross-group.
+AUD_COMMON = "Common (everyone)"
+AUD_ADMIN = "For Admins"
+AUD_TEACHER = "For Teachers & Faculty"
+AUD_STUDENT = "For Students"
+AUD_PARENT = "For Parents"  # reserved — populated when parent pages are added
+
+# Which audience bucket each page belongs to (by module_key). Edit freely; a key
+# not listed defaults to Common.
+_AUDIENCE_GROUP = {
+    "students": AUD_ADMIN, "enrollment": AUD_ADMIN, "rbac_management": AUD_ADMIN, "staff": AUD_ADMIN,
+    "classes": AUD_TEACHER, "attendance": AUD_TEACHER, "send_notification": AUD_TEACHER,
+    "exams": AUD_TEACHER, "my_classes": AUD_TEACHER, "quizzes": AUD_TEACHER,
+    "assignments": AUD_STUDENT, "grades": AUD_STUDENT,
+    "dashboard": AUD_COMMON, "profile": AUD_COMMON, "notifications": AUD_COMMON,
+    "timetable": AUD_COMMON, "chat": AUD_COMMON,
+}
+
+
+# Pages an admin may NOT distribute to a dynamic 'staff' role because they either
+# (a) are admin-only management tools, or (b) are tied to a teacher/student identity
+# (their endpoints would 403 for a staff user). They still exist for the admin's
+# constant sidebar / canonical teacher+student roles.
+_ADMIN_ONLY = {"rbac_management"}                                  # admin's own tools
+_NOT_STAFF_GRANTABLE = {"my_classes", "quizzes", "assignments", "grades", "chat"}  # teacher/student-coupled
+
+
+def _m(key, name, icon, path, audience, premium=False, tabs=None, section=SEC_CORE, required=False):
+    return {
+        "module_key": key,
+        "module_name": name,
+        "icon": icon,
+        "path": path,
+        "audience": list(audience),
+        "section": section,
+        "audience_group": _AUDIENCE_GROUP.get(key, AUD_COMMON),
+        # required = always-on, cannot be toggled off in the RBAC pickers and is
+        # always present in the sidebar (e.g. Profile).
+        "required": required,
+        # admin_only: never distributed to dynamic roles nor part of an org plan.
+        "admin_only": key in _ADMIN_ONLY,
+        # staff_grantable: may be assigned to a dynamic 'staff' role (its endpoints
+        # accept a staff-with-module). False = works only for canonical roles.
+        "staff_grantable": key not in _ADMIN_ONLY and key not in _NOT_STAFF_GRANTABLE,
+        "premium": premium,
+        "tabs": tabs or [],          # list of (tab_key, tab_label)
+    }
+
+
+# Ordered module catalog — ONLY pages that have a real, working screen. Keep keys
+# stable (persisted in permission rows). Each `path` must be a registered route.
+MODULES = [
+    # --- shared / core ---
+    _m("dashboard", "Dashboard", "dashboard", "/dashboard", [AUTHORITY, TEACHER, STUDENT],
+       section=SEC_CORE),
+    # Profile is REQUIRED: always on, never toggled off, every user always has it.
+    _m("profile", "Profile", "person", "/profile", [AUTHORITY, TEACHER, STUDENT],
+       section=SEC_CORE, required=True),
+    _m("notifications", "Notifications", "notifications", "/notifications",
+       [AUTHORITY, TEACHER, STUDENT], section=SEC_CORE),
+
+    # --- authority (admin) ---
+    _m("students", "Students", "people", "/school_authority/students", [AUTHORITY],
+       tabs=[("list", "List"), ("add", "Add"), ("bulk_import", "Bulk Import"), ("bulk_ops", "Bulk Operations")],
+       section=SEC_ADMIN),
+    _m("classes", "Classes", "class", "/school_authority/classes", [AUTHORITY, TEACHER],
+       tabs=[("list", "List"), ("add", "Add"), ("assign_teachers", "Assign Teachers"), ("rollover", "Rollover")],
+       section=SEC_ACADEMICS),
+    _m("timetable", "Timetable", "schedule", "/school_authority/timetable",
+       [AUTHORITY, TEACHER, STUDENT],
+       tabs=[("master", "Master"), ("class", "Class"), ("conflicts", "Conflicts")],
+       section=SEC_ACADEMICS),
+    _m("attendance", "Attendance", "how_to_reg", "/school_authority/attendance",
+       [AUTHORITY, TEACHER],
+       tabs=[("daily", "Daily"), ("period", "Period"), ("analytics", "Analytics")],
+       section=SEC_ACADEMICS),
+    _m("enrollment", "Enrolment", "group_add", "/school_authority/enrollment", [AUTHORITY],
+       section=SEC_ADMIN),
+    _m("send_notification", "Send Message", "send", "/admin/send-notification",
+       [AUTHORITY, TEACHER], section=SEC_COMMS),
+    _m("exams", "Exams", "fact_check", "/school_authority/exams", [AUTHORITY, TEACHER, STUDENT],
+       section=SEC_ACADEMICS),
+    _m("rbac_management", "Roles & Access", "admin_panel_settings", "/admin/roles", [AUTHORITY],
+       section=SEC_ADMIN),
+    _m("staff", "Staff & Users", "badge", "/admin/staff", [AUTHORITY], section=SEC_ADMIN),
+
+    # --- teacher ---
+    _m("my_classes", "My Classes", "class", "/teacher/classes", [TEACHER], section=SEC_ACADEMICS),
+    _m("quizzes", "Quizzes", "quiz", "/teacher/quizzes", [TEACHER], section=SEC_ACADEMICS),
+
+    # --- academics (student-facing) ---
+    _m("assignments", "Assignments", "assignment", "/student/assignments", [TEACHER, STUDENT],
+       section=SEC_ACADEMICS),
+    _m("grades", "Grades", "grade", "/student/grades", [TEACHER, STUDENT], section=SEC_ACADEMICS),
+
+    # --- communication ---
+    _m("chat", "Messages", "forum", "/student/chat", [TEACHER, STUDENT], section=SEC_COMMS),
+]
+
+# Premium modules default OFF at the tenant level (super-admin must enable).
+PREMIUM_MODULE_KEYS = {m["module_key"] for m in MODULES if m["premium"]}
+
+# Lookups
+_BY_KEY = {m["module_key"]: m for m in MODULES}
+
+
+def get_module(module_key: str):
+    return _BY_KEY.get(module_key)
+
+
+def modules_for(user_type: str):
+    """Modules visible to a user type (its audience). For the unified 'staff'
+    type there is NO audience restriction — every module is grantable."""
+    if user_type == STAFF:
+        return list(MODULES)
+    return [m for m in MODULES if user_type in m["audience"]]
+
+
+def module_keys_for(user_type: str):
+    return [m["module_key"] for m in modules_for(user_type)]
+
+
+def tab_keys(module_key: str):
+    m = _BY_KEY.get(module_key)
+    return [t[0] for t in (m["tabs"] if m else [])]
+
+
+def enabled_field(user_type: str) -> str:
+    """Column on tenant_module_permission for a user type."""
+    return {
+        AUTHORITY: "authority_enabled",
+        TEACHER: "teacher_enabled",
+        STUDENT: "student_enabled",
+    }[user_type]

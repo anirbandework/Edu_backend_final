@@ -1,45 +1,75 @@
 
 
-services:
-  api:
-    build: .
-    environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      - redis
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-    command: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+# services:
+#   api:
+#     build: .
+#     environment:
+#       - DATABASE_URL=${DATABASE_URL}
+#       - REDIS_URL=redis://redis:6379
+#       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+#       - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+#       - AWS_REGION=${AWS_REGION}
+#       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+#       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+#     ports:
+#       - "8000:8000"
+#     env_file:
+#       - .env
+#     depends_on:
+#       - redis
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 1G
+#         reservations:
+#           memory: 512M
+#     command: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 
-  celery:
-    build: .
+#   celery:
+#     build: .
+#     environment:
+#       - DATABASE_URL=${DATABASE_URL}
+#       - REDIS_URL=redis://redis:6379
+#       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+#       - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+#       - AWS_REGION=${AWS_REGION}
+#       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+#       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+#     env_file:
+#       - .env
+#     depends_on:
+#       - redis
+#     command: celery -A celery_worker.celery_app worker --loglevel=info
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 512M
+
+#   redis:
+#     image: redis:7-alpine
+#     ports:
+#       - "6379:6379"
+#     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 256M
+
+
+
+
+
+services:
+  db:
+    image: postgres:14-alpine
     environment:
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=redis://redis:6379
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-    env_file:
-      - .env
-    depends_on:
-      - redis
-    command: celery -A celery_worker.celery_app worker --loglevel=info
+      POSTGRES_DB: eduassist_db
+      POSTGRES_USER: eduassist_user
+      POSTGRES_PASSWORD: eduassist_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     deploy:
       resources:
         limits:
@@ -54,3 +84,26 @@ services:
       resources:
         limits:
           memory: 256M
+
+  api:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://eduassist_user:eduassist_password@db:5432/eduassist_db
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+    command: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+
+volumes:
+  postgres_data:

@@ -12,9 +12,23 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 # Enhanced engine configuration for bulk operations and background tasks
+#
+# SCALABILITY: pools are now explicitly sized. With N gunicorn workers and 2 engines,
+# peak connections = N * 2 * (db_pool_size + db_max_overflow). Keep that under Postgres
+# max_connections, and put PgBouncer (transaction mode) in front for 100k+ users.
+# pool_pre_ping avoids handing out connections broken by a fork or a server restart
+# (mitigates the gunicorn --preload fork-sharing hazard).
+_POOL_KWARGS = dict(
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_pre_ping=True,
+    pool_recycle=settings.db_pool_recycle_seconds,
+)
+
 engine = create_async_engine(
     settings.database_url,
     echo=(settings.environment == 'development'),
+    **_POOL_KWARGS,
     connect_args={
         "command_timeout": 300,
         "server_settings": {
@@ -31,6 +45,7 @@ engine = create_async_engine(
 background_engine = create_async_engine(
     settings.database_url,
     echo=False,
+    **_POOL_KWARGS,
     connect_args={
         "command_timeout": 600,
         "server_settings": {
