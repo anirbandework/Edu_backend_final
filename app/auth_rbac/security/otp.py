@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 
 from ...core.config import settings
 from ...core.cache import cache_service
+from ...core.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +32,20 @@ def _cooldown_key(purpose: str, phone: str) -> str:
 
 
 def _generate_code() -> str:
-    if settings.otp_dev_mode:
+    # Dev mode is FORCED OFF in production (settings.otp_dev_mode_active), so the
+    # fixed '999999' code can never be issued on a live deployment.
+    if settings.otp_dev_mode_active:
         return settings.otp_dev_code
     return "".join(secrets.choice("0123456789") for _ in range(settings.otp_length))
 
 
 def _deliver(phone: str, code: str) -> None:
-    if settings.otp_dev_mode:
+    if settings.otp_dev_mode_active:
         logger.info(f"[DEV OTP] phone={phone} code={code}")
     else:
-        # TODO: integrate SMS provider (Twilio / AWS SNS / MSG91) here.
+        # TODO: integrate SMS provider (Twilio / AWS SNS / MSG91) here. Until then,
+        # OTP flows in production generate a real random code that is NOT delivered
+        # (fail-closed: no predictable code, no leaked code) — wire a provider to ship OTP.
         logger.warning("OTP SMS delivery not configured; set up a provider.")
 
 
@@ -52,8 +57,11 @@ class OtpRequestResult:
 
 
 async def request_otp(phone: str, purpose: str) -> OtpRequestResult:
-    """Issue an OTP for (phone, purpose). Enforces a resend cooldown."""
+    """Issue an OTP for (phone, purpose). Enforces a resend cooldown + an hourly cap
+    per phone (so a single number can't be flooded from rotating IPs)."""
     phone = phone.strip()
+    # Hard cap: at most 8 OTPs per phone per hour for this purpose (raises 429).
+    await enforce_rate_limit(phone, f"otp_phone_{purpose}", 8, 3600)
     if await cache_service.get(_cooldown_key(purpose, phone)):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -64,7 +72,8 @@ async def request_otp(phone: str, purpose: str) -> OtpRequestResult:
     await cache_service.set(_otp_key(purpose, phone), payload, ttl=settings.otp_ttl_seconds)
     await cache_service.set(_cooldown_key(purpose, phone), "1", ttl=settings.otp_resend_cooldown_seconds)
     _deliver(phone, code)
-    return OtpRequestResult(sent=True, dev_code=code if settings.otp_dev_mode else None)
+    # Only ever echo the code outside production (dev convenience); never in prod.
+    return OtpRequestResult(sent=True, dev_code=code if settings.otp_dev_mode_active else None)
 
 
 async def verify_otp(phone: str, purpose: str, code: str) -> None:

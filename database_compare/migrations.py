@@ -12,67 +12,109 @@ run_production_migration.
 # (label, sql) — labels show up in the per-statement run log.
 MIGRATIONS = [
     # ── auth: hashed passwords on the identity tables ────────────────────────
-    ("school_authorities.password_hash",
-     "ALTER TABLE school_authorities ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
+    ("authorities.password_hash",
+     "ALTER TABLE authorities ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
 
     # ── rbac: assigned role pointer on identity tables ───────────────────────
-    ("school_authorities.rbac_role_id",
-     "ALTER TABLE school_authorities ADD COLUMN IF NOT EXISTS rbac_role_id UUID"),
+    ("authorities.rbac_role_id",
+     "ALTER TABLE authorities ADD COLUMN IF NOT EXISTS rbac_role_id UUID"),
 
-    # ── scalability: composite indexes on hot query paths ────────────────────
-    ("ix classes(tenant,year)",
-     "CREATE INDEX IF NOT EXISTS ix_classes_tenant_year ON classes (tenant_id, academic_year)"),
-    ("ix attendances(tenant,user,date)",
-     "CREATE INDEX IF NOT EXISTS ix_attendances_tenant_user_date ON attendances (tenant_id, user_id, attendance_date)"),
-    ("ix attendances(tenant,date)",
-     "CREATE INDEX IF NOT EXISTS ix_attendances_tenant_date ON attendances (tenant_id, attendance_date)"),
-    ("ix enrollments(class,year)",
-     "CREATE INDEX IF NOT EXISTS ix_enrollments_class_year ON enrollments (class_id, academic_year)"),
-
-    # ── enrollments: denormalized tenant_id for direct tenant scoping ────────
-    ("enrollments.tenant_id col",
-     "ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS tenant_id UUID"),
-    ("enrollments.tenant_id backfill",
-     "UPDATE enrollments e SET tenant_id = c.tenant_id FROM classes c "
-     "WHERE e.class_id = c.id AND e.tenant_id IS NULL"),
-    ("ix enrollments.tenant_id",
-     "CREATE INDEX IF NOT EXISTS ix_enrollments_tenant_id ON enrollments (tenant_id)"),
-    ("fk enrollments.tenant_id",
-     "ALTER TABLE enrollments ADD CONSTRAINT fk_enrollments_tenant "
-     "FOREIGN KEY (tenant_id) REFERENCES tenants(id)"),
-    ("enrollments.tenant_id not null",
-     "ALTER TABLE enrollments ALTER COLUMN tenant_id SET NOT NULL"),
-    ("ix notif_recipients(recipient,read_at)",
-     "CREATE INDEX IF NOT EXISTS ix_notif_recipients_user ON notification_recipients (recipient_id, read_at)"),
+    # (Academic-feature migrations — classes/attendances/enrollments/notifications —
+    # were removed with those modules. Re-add here if/when those features return.)
+    #
+    # NOTE: the organisation is institution-agnostic — its columns are name / code /
+    # org_type / head_name (NOT school_*). The ORM model is the source of truth, so
+    # create_all builds them directly; no column-rename migration is needed on a
+    # fresh DB. (An older school_*-schema DB no longer exists, so the one-off rename
+    # migrations were removed.)
 
     # ── rbac: indexes + FK (ON DELETE SET NULL) on the role pointer ──────────
-    ("ix school_authorities.rbac_role_id",
-     "CREATE INDEX IF NOT EXISTS ix_school_authorities_rbac_role ON school_authorities (rbac_role_id)"),
-    ("fk school_authorities.rbac_role_id",
-     "ALTER TABLE school_authorities ADD CONSTRAINT fk_authorities_rbac_role "
+    ("ix authorities.rbac_role_id",
+     "CREATE INDEX IF NOT EXISTS ix_authorities_rbac_role ON authorities (rbac_role_id)"),
+    ("fk authorities.rbac_role_id",
+     "ALTER TABLE authorities ADD CONSTRAINT fk_authorities_rbac_role "
      "FOREIGN KEY (rbac_role_id) REFERENCES rbac_roles(id) ON DELETE SET NULL"),
 
-    # ── super-admin → admin → schools model ──────────────────────────────────
-    # Which admin (school_authority) created/owns a school. Lets one admin own
-    # many schools and the super-admin Tenants screen group schools per admin.
-    ("tenants.owner_authority_id",
-     "ALTER TABLE tenants ADD COLUMN IF NOT EXISTS owner_authority_id UUID"),
-    ("fk tenants.owner_authority_id",
-     "ALTER TABLE tenants ADD CONSTRAINT fk_tenants_owner_authority "
-     "FOREIGN KEY (owner_authority_id) REFERENCES school_authorities(id) ON DELETE SET NULL"),
-    ("index tenants.owner_authority_id",
-     "CREATE INDEX IF NOT EXISTS ix_tenants_owner_authority ON tenants (owner_authority_id)"),
-    # An admin is created by the super-admin BEFORE they create any school, so
-    # their tenant_id starts NULL (their active school is set on first creation).
-    ("school_authorities.tenant_id nullable",
-     "ALTER TABLE school_authorities ALTER COLUMN tenant_id DROP NOT NULL"),
+    # ── super-admin → admin → organisations model ──────────────────────────────────
+    # Which admin (authority) created/owns an organisation. Lets one admin own
+    # many organisations and the super-admin Organisations screen group organisations per admin.
+    ("organisations.owner_authority_id",
+     "ALTER TABLE organisations ADD COLUMN IF NOT EXISTS owner_authority_id UUID"),
+    ("fk organisations.owner_authority_id",
+     "ALTER TABLE organisations ADD CONSTRAINT fk_organisations_owner_authority "
+     "FOREIGN KEY (owner_authority_id) REFERENCES authorities(id) ON DELETE SET NULL"),
+    ("index organisations.owner_authority_id",
+     "CREATE INDEX IF NOT EXISTS ix_organisations_owner_authority ON organisations (owner_authority_id)"),
+    # An admin is created by the super-admin BEFORE they create any organisation, so
+    # their organisation_id starts NULL (their active organisation is set on first creation).
+    ("authorities.organisation_id nullable",
+     "ALTER TABLE authorities ALTER COLUMN organisation_id DROP NOT NULL"),
     # Login is by phone+password; email is optional on admins.
-    ("school_authorities.email nullable",
-     "ALTER TABLE school_authorities ALTER COLUMN email DROP NOT NULL"),
+    ("authorities.email nullable",
+     "ALTER TABLE authorities ALTER COLUMN email DROP NOT NULL"),
 
-    # ── rbac: 2nd per-org ceiling — which pages the ADMIN sees in their OWN
-    #    sidebar (separate from the distributable authority/teacher/student cols).
-    #    Default TRUE so existing orgs keep "admin sees everything".
-    ("tenant_module_permissions.admin_enabled",
-     "ALTER TABLE tenant_module_permissions ADD COLUMN IF NOT EXISTS admin_enabled BOOLEAN NOT NULL DEFAULT TRUE"),
+    # ── institution group: super-admin → group → admins + organisations ───────
+    # An organisation belongs to an institution group (all the group's admins see
+    # it). The column is model-defined; its FK + index live here (matching the
+    # owner_authority_id pattern). authorities.group_id has its FK inline in the ORM.
+    ("fk organisations.group_id",
+     "ALTER TABLE organisations ADD CONSTRAINT fk_organisations_group "
+     "FOREIGN KEY (group_id) REFERENCES institution_groups(id) ON DELETE SET NULL"),
+    ("index organisations.group_id",
+     "CREATE INDEX IF NOT EXISTS ix_organisations_group ON organisations (group_id)"),
+    # NOTE: the per-group module-access ceilings (group_module_permissions /
+    # group_tab_permissions, with role_enabled + admin_enabled) are ORM-defined, so
+    # create_all builds them — no migration needed. They replace the old
+    # organisation_module_permissions audience model.
+
+    # ── scale: indexes on hot columns (100k+ users) ──────────────────────────
+    # Login resolves a user by PHONE across authorities + members on every attempt;
+    # list/permission queries filter by group_id / organisation_id / is_deleted.
+    # Without these, those are sequential scans at scale.
+    ("ix authorities.phone",
+     "CREATE INDEX IF NOT EXISTS ix_authorities_phone ON authorities (phone)"),
+    ("ix members.phone",
+     "CREATE INDEX IF NOT EXISTS ix_members_phone ON members (phone)"),
+    ("ix authorities.group_id",
+     "CREATE INDEX IF NOT EXISTS ix_authorities_group ON authorities (group_id)"),
+    ("ix authorities.organisation_id",
+     "CREATE INDEX IF NOT EXISTS ix_authorities_org ON authorities (organisation_id)"),
+    ("ix members.organisation_id+is_deleted",
+     "CREATE INDEX IF NOT EXISTS ix_members_org_active ON members (organisation_id, is_deleted)"),
+    ("ix members.rbac_role_id",
+     "CREATE INDEX IF NOT EXISTS ix_members_rbac_role ON members (rbac_role_id)"),
+    ("ix organisations.group_id+is_deleted",
+     "CREATE INDEX IF NOT EXISTS ix_organisations_group_active ON organisations (group_id, is_deleted)"),
+
+    # ── session revocation: per-user "invalidate all tokens before this time" ──
+    # Stamped to now() on password change/reset so every prior access+refresh token
+    # is rejected (token.iat < this). Checked per request (Redis-cached, DB fallback).
+    ("authorities.sessions_invalidated_at",
+     "ALTER TABLE authorities ADD COLUMN IF NOT EXISTS sessions_invalidated_at TIMESTAMPTZ"),
+    ("members.sessions_invalidated_at",
+     "ALTER TABLE members ADD COLUMN IF NOT EXISTS sessions_invalidated_at TIMESTAMPTZ"),
+    ("super_admins.sessions_invalidated_at",
+     "ALTER TABLE super_admins ADD COLUMN IF NOT EXISTS sessions_invalidated_at TIMESTAMPTZ"),
+
+    # ── integrity: DB-level phone uniqueness (phone is the login id) ──────────
+    # Enforced per identity table on NON-deleted rows (a soft-deleted user frees
+    # their phone). Closes the app-code-only TOCTOU race (H14) that let concurrent
+    # inserts create duplicate phones → cross-tenant login shadowing. If either of
+    # these is reported "skipped" due to existing duplicates, dedup first then re-run.
+    ("uq members.phone (active)",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_members_phone_active "
+     "ON members (phone) WHERE is_deleted = false"),
+    ("uq authorities.phone (active)",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_authorities_phone_active "
+     "ON authorities (phone) WHERE is_deleted = false"),
+
+    # ── cleanup: the invitation / signup-link system was removed (onboarding is now
+    #    password-less first-login via phone + OTP). Drop the orphaned, never-used table.
+    ("drop invitations table",
+     "DROP TABLE IF EXISTS invitations CASCADE"),
+
+    # ── members.phone nullable: a member can be created name-only (the org's
+    #    auto-created head/Principal), gaining a phone later to enable login.
+    ("members.phone nullable",
+     "ALTER TABLE members ALTER COLUMN phone DROP NOT NULL"),
 ]

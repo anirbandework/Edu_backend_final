@@ -7,7 +7,7 @@ indusinfotechs_backend approach. Alembic is retired → `_alembic_disabled/`.)
 
 ## Files
 - **`migrations.py`** — the ordered, idempotent `(label, sql)` list (`ALTER … IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, FKs).
-- **`seeds.py`** — idempotent data seeds (super-admin from `.env`, per-tenant default RBAC roles, dev passwords).
+- **`seeds.py`** — idempotent data seeds (super-admin from `.env`, per-organisation default RBAC roles, dev passwords).
 - **`run_local_migration.py`** — `create_all` → migrations → seeds, on `DATABASE_URL`.
 - **`run_production_migration.py`** — same on `PRODUCTION_DATABASE_URL` (no dev passwords; asks to confirm).
 - **`check_schema_diff.py`** — introspects local vs prod, prints/saves the fix SQL.

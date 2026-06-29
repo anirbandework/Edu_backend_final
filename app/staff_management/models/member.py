@@ -1,7 +1,7 @@
-"""Member — the UNIFIED identity table for every dynamic-role user a school
+"""Member — the UNIFIED identity table for every dynamic-role user an organisation
 creates (faculty, principal, HOD, office staff, librarian, accountant, ...).
 
-Unlike teachers/students/school_authorities, a staff user has no fixed canonical
+Unlike teachers/students/authorities, a staff user has no fixed canonical
 behaviour: what they can see and do is defined entirely by the rbac_role assigned
 to them (cross-section page grants + delegated user-creation). Login is by
 phone+password, same as every other user.
@@ -16,8 +16,8 @@ from ...models.base import Base
 class Member(Base):
     __tablename__ = "members"
 
-    # The school this staff member belongs to (always scoped to one tenant).
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    # The organisation this staff member belongs to (always scoped to one organisation).
+    organisation_id = Column(UUID(as_uuid=True), ForeignKey("organisations.id"), nullable=False, index=True)
 
     # The dynamic role that defines this user's pages + creation rights.
     rbac_role_id = Column(
@@ -34,7 +34,9 @@ class Member(Base):
     last_name = Column(String(50), nullable=False)
     # Email OPTIONAL — login is phone+password. Unique holds for non-null values.
     email = Column(String(100), nullable=True, unique=True, index=True)
-    phone = Column(String(20), nullable=False, index=True)
+    # Phone is the login id when set, but NULLABLE: a member can be created name-only
+    # (e.g. an org's auto-created head/Principal) and get a phone later to enable login.
+    phone = Column(String(20), nullable=True, index=True)
     password_hash = Column(String(255), nullable=True)  # bcrypt; null = login disabled
 
     # Free-text designation shown in the UI ("Faculty", "Principal", "HOD"...).
@@ -51,5 +53,7 @@ class Member(Base):
     profile = Column(JSON)
     last_login = Column(DateTime, nullable=True)
     experience_years = Column(Integer, default=0)
+    # Tokens issued before this instant are rejected (set on password change/reset).
+    sessions_invalidated_at = Column(DateTime(timezone=True), nullable=True)
 
-    tenant = relationship("Tenant")
+    organisation = relationship("Organisation")

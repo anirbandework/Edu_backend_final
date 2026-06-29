@@ -12,15 +12,15 @@ class BaseService(Generic[T]):
         self.model = model
         self.db = db
 
-    def _scope(self, stmt, tenant_id):
-        """Append a tenant filter when tenant_id is provided and the model is
-        tenant-owned. Pass tenant_id=None only for super-admin / cross-tenant use."""
-        if tenant_id is not None and hasattr(self.model, "tenant_id"):
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
+    def _scope(self, stmt, organisation_id):
+        """Append a organisation filter when organisation_id is provided and the model is
+        organisation-owned. Pass organisation_id=None only for super-admin / cross-organisation use."""
+        if organisation_id is not None and hasattr(self.model, "organisation_id"):
+            stmt = stmt.where(self.model.organisation_id == organisation_id)
         return stmt
 
-    async def get(self, id: Any, tenant_id: Any = None):
-        stmt = self._scope(select(self.model).where(self.model.id == id), tenant_id)
+    async def get(self, id: Any, organisation_id: Any = None):
+        stmt = self._scope(select(self.model).where(self.model.id == id), organisation_id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -107,9 +107,9 @@ class BaseService(Generic[T]):
         await self.db.refresh(obj)
         return obj
 
-    async def update(self, id: Any, obj_in: Dict, tenant_id: Any = None) -> Optional[T]:
+    async def update(self, id: Any, obj_in: Dict, organisation_id: Any = None) -> Optional[T]:
         # For soft-deleted records, we need to include them in the search
-        stmt = self._scope(select(self.model).where(self.model.id == id), tenant_id)
+        stmt = self._scope(select(self.model).where(self.model.id == id), organisation_id)
         result = await self.db.execute(stmt)
         obj = result.scalar_one_or_none()
 
@@ -121,8 +121,8 @@ class BaseService(Generic[T]):
         await self.db.refresh(obj)
         return obj
 
-    async def soft_delete(self, id: Any, tenant_id: Any = None) -> bool:
-        obj = await self.get(id, tenant_id=tenant_id)
+    async def soft_delete(self, id: Any, organisation_id: Any = None) -> bool:
+        obj = await self.get(id, organisation_id=organisation_id)
         if not obj:
             return False
         if hasattr(obj, "is_deleted"):
@@ -131,9 +131,9 @@ class BaseService(Generic[T]):
             return True
         return False
 
-    async def hard_delete(self, id: Any, tenant_id: Any = None) -> bool:
+    async def hard_delete(self, id: Any, organisation_id: Any = None) -> bool:
         """Permanently delete record from database"""
-        obj = await self.get(id, tenant_id=tenant_id)
+        obj = await self.get(id, organisation_id=organisation_id)
         if not obj:
             return False
         await self.db.delete(obj)

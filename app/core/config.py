@@ -47,11 +47,6 @@ class Settings(BaseSettings):
     otp_max_attempts: int = 5             # wrong-code attempts before lockout
     otp_resend_cooldown_seconds: int = 30 # min gap between OTP requests
 
-    # --- Invitations (signup links) ---
-    invite_ttl_hours: int = 72
-    # Base URL the signup link points at (the Flutter web app).
-    app_base_url: str = 'http://localhost:8550'
-
     model_config = {
         'env_file': '.env',
         'extra': 'ignore'
@@ -60,5 +55,19 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in ('production', 'prod', 'staging')
+
+    @property
+    def otp_dev_mode_active(self) -> bool:
+        """Whether the DEV OTP path is active — i.e. every code is the fixed
+        ``otp_dev_code`` ('999999'), logged instead of SMS'd, and echoed in the response.
+
+        ⚠️ TEMPORARY (product decision 2026-06-30): the dev OTP is intentionally kept ON
+        in EVERY environment, including production, because no SMS provider is wired yet
+        and the team wants the constant 999999 to work in prod too for now. This is a
+        known account-takeover risk (anyone who knows a phone can reset that password).
+        **Before public launch, restore the production gate**:
+        ``return self.otp_dev_mode and not self.is_production`` and integrate an SMS provider.
+        Single switch-point so re-hardening is a one-line change."""
+        return self.otp_dev_mode
 
 settings = Settings()

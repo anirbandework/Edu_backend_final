@@ -1,5 +1,5 @@
 """Platform super-admin. The first one is seeded from .env (see scripts/migrate_security)."""
-from sqlalchemy import Column, String
+from sqlalchemy import Column, String, DateTime
 from ...models.base import Base
 
 
@@ -12,3 +12,6 @@ class SuperAdmin(Base):
     first_name = Column(String(50), nullable=True)
     last_name = Column(String(50), nullable=True)
     status = Column(String(20), default="active", nullable=False)
+    # Tokens issued before this instant are rejected (set on password change). See
+    # auth_rbac/security/sessions.py.
+    sessions_invalidated_at = Column(DateTime(timezone=True), nullable=True)

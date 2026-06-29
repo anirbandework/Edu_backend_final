@@ -1,1 +1,0 @@
-# School Authority Management Module

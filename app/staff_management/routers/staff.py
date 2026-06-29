@@ -1,8 +1,9 @@
-"""Staff & Users API — the unified, dynamic-role user directory for a school.
+"""Staff & Users API — the unified, dynamic-role user directory for an organisation.
 
-Create/list/manage members. Creation is delegation-gated: an admin may add
-any role in their school; a staff member may add only the roles their own role
-was granted permission to create.
+Create/list/manage members. Page-access model: an admin may add any role in their
+organisation; a staff member who holds the "Staff & Users" page may add users into ANY
+of the organisation's roles. Holding the page IS the grant to manage users — there is no
+separate per-role delegation step.
 """
 from __future__ import annotations
 from typing import Optional
@@ -47,25 +48,25 @@ class PasswordBody(BaseModel):
     password: str
 
 
-def _tenant(principal: Principal) -> str:
-    if not principal.tenant_id:
-        raise HTTPException(status_code=400, detail="No active school in session.")
-    return principal.tenant_id
+def _organisation(principal: Principal) -> str:
+    if not principal.organisation_id:
+        raise HTTPException(status_code=400, detail="No active organisation in session.")
+    return principal.organisation_id
 
 
 async def _require_manage_staff(db, principal: Principal) -> None:
     """Authorize callers who may view/manage the staff directory. The /api/staff
-    router is otherwise only AUTHED, so without this ANY tenant user (student,
+    router is otherwise only AUTHED, so without this ANY organisation user (student,
     teacher, zero-permission staff) could read/edit/delete staff. Allowed:
-    the school admin, the super-admin, or a staff user whose role was granted
+    the organisation admin, the super-admin, or a staff user whose role was granted
     the 'Staff & Users' (staff) page."""
-    _tenant(principal)
+    _organisation(principal)
     if principal.is_authority or principal.is_super_admin:
         return
     if principal.role == "staff":
         role_id = await resolve_role_id(db, "staff", principal.user_id)
         if role_id and await RBACService.has_module_access(
-            db, user_type="staff", tenant_id=principal.tenant_uuid,
+            db, user_type="staff", organisation_id=principal.organisation_uuid,
             role_id=role_id, module_key="staff",
         ):
             return
@@ -73,7 +74,7 @@ async def _require_manage_staff(db, principal: Principal) -> None:
 
 
 async def _load(db, principal, staff_id):
-    staff = await StaffService.get(db, staff_id, _tenant(principal))
+    staff = await StaffService.get(db, staff_id, _organisation(principal))
     if not staff:
         raise HTTPException(status_code=404, detail="Staff member not found.")
     return staff
@@ -81,8 +82,8 @@ async def _load(db, principal, staff_id):
 
 async def _validate_role(db, principal, role_id: str):
     role = await RBACService.get_role(db, role_id)
-    if not role or str(role.tenant_id) != str(principal.tenant_id):
-        raise HTTPException(status_code=400, detail="Invalid role for this school.")
+    if not role or str(role.organisation_id) != str(principal.organisation_id):
+        raise HTTPException(status_code=400, detail="Invalid role for this organisation.")
     # A members account may only carry a dynamic 'staff' role — never a
     # teacher/student/authority role (which would smuggle that audience's pages).
     if role.user_type != "staff":
@@ -93,10 +94,14 @@ async def _validate_role(db, principal, role_id: str):
 
 
 @router.get("")
-async def list_staff(principal: Principal = Depends(get_current_principal),
+async def list_staff(limit: int = 100, offset: int = 0, q: str = "", role_id: str = "",
+                     principal: Principal = Depends(get_current_principal),
                      db: AsyncSession = Depends(get_db)):
     await _require_manage_staff(db, principal)
-    return await StaffService.list_staff(db, _tenant(principal))
+    limit = max(1, min(int(limit or 100), 200))  # capped page size
+    offset = max(0, int(offset or 0))
+    return await StaffService.list_staff(
+        db, _organisation(principal), limit=limit, offset=offset, q=q, role_id=role_id or None)
 
 
 @router.post("")
@@ -107,7 +112,7 @@ async def create_staff(body: StaffCreate,
     await _validate_role(db, principal, body.rbac_role_id)
     try:
         staff = await StaffService.create(
-            db, tenant_id=principal.tenant_uuid, rbac_role_id=body.rbac_role_id,
+            db, organisation_id=principal.organisation_uuid, rbac_role_id=body.rbac_role_id,
             first_name=body.first_name, last_name=body.last_name, phone=body.phone,
             email=body.email, position=body.position,
             created_by=principal.user_uuid,

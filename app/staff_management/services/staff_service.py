@@ -4,12 +4,12 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.member import Member
-from ...auth_rbac.security.password import hash_password
+from ...auth_rbac.security.password import hash_password_async
 from ...auth_rbac.access.service import RBACService
 from ...auth_rbac.access.models import RbacRole
 
@@ -20,11 +20,42 @@ def _gen_staff_id() -> str:
 
 class StaffService:
     @staticmethod
-    async def list_staff(db: AsyncSession, tenant_id) -> list[dict]:
-        stmt = select(Member).where(Member.tenant_id == tenant_id)
+    async def list_staff(db: AsyncSession, organisation_id, *, limit: int = 100,
+                         offset: int = 0, q: str = "", role_id: Optional[str] = None) -> dict:
+        """Paginated + searchable staff list for one organisation. Returns an envelope
+        {items, total, limit, offset} so the client can page (a school's students are
+        staff members, so this list can be large). `q` matches name (incl. full
+        "First Last"), email, phone, staff id, OR role name; `role_id` filters to one role."""
+        base = select(Member).where(Member.organisation_id == organisation_id)
         if hasattr(Member, "is_deleted"):
-            stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
-        rows = (await db.execute(stmt.order_by(Member.created_at.desc()))).scalars().all()
+            base = base.where(Member.is_deleted == False)  # noqa: E712
+        if role_id:
+            base = base.where(Member.rbac_role_id == role_id)
+        term = (q or "").strip()
+        if term:
+            like = f"%{term}%"
+            # roles in THIS org whose name matches — so "teacher" finds everyone with that role.
+            role_match = (
+                select(RbacRole.id)
+                .where(RbacRole.organisation_id == organisation_id,
+                       RbacRole.role_name.ilike(like))
+            )
+            base = base.where(or_(
+                Member.first_name.ilike(like),
+                Member.last_name.ilike(like),
+                # full name, so "John Doe" matches first+last together (concat is NULL-safe)
+                func.concat(Member.first_name, " ", Member.last_name).ilike(like),
+                Member.email.ilike(like),
+                Member.phone.ilike(like),
+                Member.staff_id.ilike(like),
+                Member.rbac_role_id.in_(role_match),
+            ))
+        total = (await db.execute(
+            select(func.count()).select_from(base.subquery())
+        )).scalar() or 0
+        rows = (await db.execute(
+            base.order_by(Member.created_at.desc()).limit(limit).offset(offset)
+        )).scalars().all()
         # role names in one shot
         role_ids = {str(s.rbac_role_id) for s in rows if s.rbac_role_id}
         role_names: dict[str, str] = {}
@@ -33,7 +64,12 @@ class StaffService:
                 select(RbacRole).where(RbacRole.id.in_(list(role_ids)))
             )).scalars().all()
             role_names = {str(r.id): r.role_name for r in rroles}
-        return [StaffService._serialize(s, role_names) for s in rows]
+        return {
+            "items": [StaffService._serialize(s, role_names) for s in rows],
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+        }
 
     @staticmethod
     def _serialize(s: Member, role_names: dict) -> dict:
@@ -54,8 +90,8 @@ class StaffService:
         }
 
     @staticmethod
-    async def get(db: AsyncSession, staff_id, tenant_id) -> Optional[Member]:
-        stmt = select(Member).where(Member.id == staff_id, Member.tenant_id == tenant_id)
+    async def get(db: AsyncSession, staff_id, organisation_id) -> Optional[Member]:
+        stmt = select(Member).where(Member.id == staff_id, Member.organisation_id == organisation_id)
         if hasattr(Member, "is_deleted"):
             stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
         return (await db.execute(stmt)).scalar_one_or_none()
@@ -63,8 +99,9 @@ class StaffService:
     @staticmethod
     async def _phone_taken(db: AsyncSession, phone: str, exclude_id=None) -> bool:
         """Phone must be unique across EVERY identity table — login resolves a user
-        by phone across school_authorities/members/teachers/students, so a
-        collision would let one account shadow another at login."""
+        by phone across authorities + members, so a collision would let one account
+        shadow another at login. (The legacy teachers/students tables were removed in
+        the strip-down; the only identity tables now are members + authorities.)"""
         # members (allow excluding the row being updated)
         q = "SELECT 1 FROM members WHERE phone = :p AND is_deleted = false"
         params = {"p": phone}
@@ -73,18 +110,15 @@ class StaffService:
             params["eid"] = str(exclude_id)
         if (await db.execute(text(q + " LIMIT 1"), params)).first():
             return True
-        for tbl in ("school_authorities", "teachers", "students"):
-            row = (await db.execute(
-                text(f"SELECT 1 FROM {tbl} WHERE phone = :p AND is_deleted = false LIMIT 1"),
-                {"p": phone},
-            )).first()
-            if row:
-                return True
-        return False
+        row = (await db.execute(
+            text("SELECT 1 FROM authorities WHERE phone = :p AND is_deleted = false LIMIT 1"),
+            {"p": phone},
+        )).first()
+        return bool(row)
 
     @staticmethod
     async def create(
-        db: AsyncSession, *, tenant_id, rbac_role_id, first_name, last_name, phone,
+        db: AsyncSession, *, organisation_id, rbac_role_id, first_name, last_name, phone,
         password=None, email=None, position=None, created_by=None,
     ) -> Member:
         phone = (phone or "").strip()
@@ -95,14 +129,14 @@ class StaffService:
         # Password-less by design: the admin never sets a password. The user sets
         # their own at first login (phone + OTP); status='invited' until they do.
         staff = Member(
-            tenant_id=tenant_id,
+            organisation_id=organisation_id,
             rbac_role_id=rbac_role_id,
             staff_id=_gen_staff_id(),
             first_name=(first_name or "").strip(),
             last_name=(last_name or "").strip(),
             email=(email or None),
             phone=phone,
-            password_hash=hash_password(password) if password else None,
+            password_hash=(await hash_password_async(password)) if password else None,
             position=(position or None),
             status="active" if password else "invited",
             role="staff",
@@ -155,7 +189,9 @@ class StaffService:
     async def reset_password(db: AsyncSession, staff: Member, new_password: str) -> None:
         if not new_password:
             raise ValueError("Password is required.")
-        staff.password_hash = hash_password(new_password)
+        staff.password_hash = await hash_password_async(new_password)
+        from ...auth_rbac.security.sessions import invalidate_sessions
+        await invalidate_sessions(db, "staff", staff.id)  # log out the member's old sessions
         await db.commit()
 
     @staticmethod
@@ -168,8 +204,10 @@ class StaffService:
     # ---- delegation ----
     @staticmethod
     async def can_principal_create_role(db: AsyncSession, principal, target_role_id) -> bool:
-        """Admin/super-admin may assign any role in the tenant; a staff user only
-        roles their own role was delegated to create."""
+        """Admin/super-admin may assign any role in the organisation. A staff user who
+        holds the "Staff & Users" page may assign any of the organisation's roles —
+        granting that page IS the grant to manage users. (That the target is a staff
+        role in this org is enforced by the caller in _validate_role.)"""
         if principal.is_super_admin or principal.is_authority:
             return True
         if principal.role != "staff":
@@ -178,5 +216,7 @@ class StaffService:
         my_role = await resolve_role_id(db, "staff", principal.user_id)
         if not my_role:
             return False
-        allowed = await RBACService.get_creatable_role_ids(db, my_role)
-        return str(target_role_id) in {str(a) for a in allowed}
+        return await RBACService.has_module_access(
+            db, user_type="staff", organisation_id=principal.organisation_uuid,
+            role_id=my_role, module_key="staff",
+        )

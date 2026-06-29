@@ -12,18 +12,17 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.invitation import Invitation
-from ..security.password import hash_password
+from ..security.password import hash_password_async
 from ..security.principal import ROLE_AUTHORITY, ROLE_STAFF
 from . import invitation_service
-from ...school_authority_management.models.school_authority import SchoolAuthority
+from ...authority_management.models.authority import Authority
 from ...staff_management.models.member import Member
 
-# Only the school authority (admin) is invite-created here (by the super-admin).
+# Only the authority (admin) is invite-created here (by the super-admin).
 # Every other user is a dynamic `staff` user, created via /api/staff with an
 # assigned rbac_role — not through this invite/signup path.
 _MODEL_BY_ROLE = {
-    ROLE_AUTHORITY: SchoolAuthority,
+    ROLE_AUTHORITY: Authority,
     ROLE_STAFF: Member,  # member self-onboarding (Students page invite)
 }
 _HRID_FIELD = {
@@ -38,7 +37,7 @@ def _gen_hrid(role: str) -> str:
 
 
 async def create_invited_user(
-    db: AsyncSession, *, role: str, tenant_id: Optional[str] = None,
+    db: AsyncSession, *, role: str, organisation_id: Optional[str] = None,
     first_name: str, last_name: str,
     email: Optional[str] = None, phone: Optional[str] = None,
     extra: Optional[dict] = None,
@@ -49,7 +48,7 @@ async def create_invited_user(
         await invitation_service.assert_phone_available(db, phone)
     model = _MODEL_BY_ROLE[role]
     fields = dict(
-        tenant_id=tenant_id,
+        organisation_id=organisation_id,
         first_name=first_name,
         last_name=last_name,
         status="invited",
@@ -62,7 +61,7 @@ async def create_invited_user(
         fields["phone"] = phone
     # NOT-NULL columns that vary by model
     if role == ROLE_AUTHORITY:
-        fields.setdefault("position", "School Authority")
+        fields.setdefault("position", "Administrator")
         # Email is optional now (login is phone+password); only phone is required.
         if phone is None:
             fields["phone"] = ""  # NOT NULL on authority; real phone set at signup
@@ -84,8 +83,14 @@ async def find_pending_account_by_phone(db: AsyncSession, phone: str):
     phone = (phone or "").strip()
     if not phone:
         return None, None
-    for model, role in ((SchoolAuthority, ROLE_AUTHORITY), (Member, ROLE_STAFF)):
-        stmt = select(model).where(model.phone == phone, model.password_hash.is_(None))
+    for model, role in ((Authority, ROLE_AUTHORITY), (Member, ROLE_STAFF)):
+        stmt = select(model).where(
+            model.phone == phone,
+            model.password_hash.is_(None),
+            # A DEACTIVATED account (even one that never set a password) must NOT be
+            # able to re-activate itself via first-login — only genuinely-pending users.
+            model.status != "inactive",
+        )
         if hasattr(model, "is_deleted"):
             stmt = stmt.where(model.is_deleted == False)  # noqa: E712
         user = (await db.execute(stmt)).scalars().first()
@@ -108,17 +113,17 @@ async def complete_signup(
                    "first, or use 'Forgot password' if you've already set one.")
 
     user.phone = phone.strip()
-    user.password_hash = hash_password(password)
+    user.password_hash = await hash_password_async(password)
     user.status = "active"
     if first_name:
         user.first_name = first_name
     if last_name:
         user.last_name = last_name
 
-    # Give them the tenant's default role for their type if they don't carry one yet.
+    # Give them the organisation's default role for their type if they don't carry one yet.
     if getattr(user, "rbac_role_id", None) is None:
         from ..access.service import RBACService
-        default_role_id = await RBACService.get_default_role_id(db, user.tenant_id, role)
+        default_role_id = await RBACService.get_default_role_id(db, user.organisation_id, role)
         if default_role_id:
             user.rbac_role_id = default_role_id
 

@@ -3,7 +3,7 @@
   create_all (new tables)  ->  the SAME idempotent migrations as local  ->  safe seeds.
 
 It does NOT seed dev passwords (production users set their own). It DOES ensure the
-super-admin and the per-tenant default roles exist (both idempotent).
+super-admin and the per-organisation default roles exist (both idempotent).
 
 Run from edu_backend/:   python -m database_compare.run_production_migration [--yes]
 

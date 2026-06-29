@@ -1,4 +1,4 @@
-"""RBAC API: my-permissions (everyone), role management (authority), tenant config (super-admin)."""
+"""RBAC API: my-permissions (everyone), role management (authority), organisation config (super-admin)."""
 from __future__ import annotations
 from typing import Optional, List
 
@@ -44,18 +44,6 @@ class ModuleToggle(BaseModel):
     enabled: bool
 
 
-class TenantModuleToggle(BaseModel):
-    authority_enabled: Optional[bool] = None
-    teacher_enabled: Optional[bool] = None
-    student_enabled: Optional[bool] = None
-
-
-class AssignRole(BaseModel):
-    user_type: str
-    user_id: str
-    role_id: Optional[str] = None  # null clears the role
-
-
 def _actor(p: Principal) -> str:
     return f"{p.role}:{p.user_id}"
 
@@ -78,27 +66,6 @@ async def get_catalog(principal: Principal = Depends(get_current_principal)):
 
 
 # ---------- my permissions (everyone) ----------
-async def _authority_granted_modules(db: AsyncSession, user_id: str):
-    """The module-key set a super-admin granted this admin (in school_authorities
-    .permissions JSON: {"modules":[...]}), or None if no explicit grant."""
-    row = (await db.execute(
-        text("SELECT permissions FROM school_authorities WHERE id = :id"),
-        {"id": str(user_id)},
-    )).first()
-    if not row:
-        return None
-    perms = row[0]
-    if isinstance(perms, str):
-        import json as _json
-        try:
-            perms = _json.loads(perms)
-        except Exception:
-            perms = None
-    if isinstance(perms, dict) and isinstance(perms.get("modules"), list):
-        return set(perms["modules"])
-    return None
-
-
 @router.get("/my-permissions")
 async def my_permissions(
     principal: Principal = Depends(get_current_principal),
@@ -108,8 +75,8 @@ async def my_permissions(
     # pages"): only the admin-audience pages the super-admin left ON for this org
     # are shown. This is SEPARATE from the distributable org ceiling (what the
     # admin may hand to their users' roles). Required pages (Profile) stay on.
-    if principal.role == "school_authority":
-        modules = await RBACService.get_admin_permissions(db, principal.tenant_uuid)
+    if principal.role == "authority":
+        modules = await RBACService.get_admin_permissions(db, principal.organisation_uuid)
         return {"user_type": principal.role, "modules": modules}
     if principal.is_super_admin:
         # super-admin sees the full catalog as "enabled"
@@ -123,15 +90,10 @@ async def my_permissions(
                 for m in catalog.MODULES
             ],
         }
+    # Everyone else is a unified 'staff' user: pages come from their role's explicit
+    # cross-section allow-list (default-DENY) ∩ the GROUP page-pool ceiling.
     role_id = await resolve_role_id(db, principal.role, principal.user_id)
-    # Unified dynamic staff: pages come from an explicit cross-section allow-list
-    # on their role (default-deny), not the audience-based catalog.
-    if principal.role == "staff":
-        modules = await RBACService.get_staff_permissions(db, role_id, principal.tenant_uuid)
-        return {"user_type": "staff", "role_id": role_id, "modules": modules}
-    modules = await RBACService.get_user_permissions(
-        db, user_type=principal.role, tenant_id=principal.tenant_uuid, role_id=role_id
-    )
+    modules = await RBACService.get_staff_permissions(db, role_id, principal.organisation_uuid)
     return {"user_type": principal.role, "role_id": role_id, "modules": modules}
 
 
@@ -140,97 +102,114 @@ async def grantable_pages(principal: Principal = Depends(require_authority),
                           db: AsyncSession = Depends(get_db)):
     """For the admin's Roles & Access picker: every page + a `locked` flag (the org
     doesn't have it → show 'Premium / upgrade', not assignable)."""
-    return await RBACService.grantable_pages(db, principal.tenant_uuid)
+    return await RBACService.grantable_pages(db, principal.organisation_uuid)
 
 
-# ---------- org page grant (super-admin, per organisation/tenant) ----------
-def _valid_tenant(tenant_id: str) -> str:
-    """Reject malformed tenant ids before they reach asyncpg (avoids a 500)."""
+# ========= module-access ceilings (super-admin, PER INSTITUTION GROUP) =========
+# Two ceilings, both applying to every organisation in the group:
+#   (a) page pool  → /group/{id}/pages       (admins grant these to staff roles)
+#   (b) admin pages → /group/{id}/admin-pages (what the admins themselves see)
+def _valid_group(group_id: str) -> str:
+    """Reject malformed group ids before they reach asyncpg (avoids a 500)."""
     try:
         import uuid as _uuid
-        _uuid.UUID(str(tenant_id))
+        _uuid.UUID(str(group_id))
     except (ValueError, TypeError, AttributeError):
-        raise HTTPException(status_code=400, detail="Invalid organisation id")
-    return tenant_id
+        raise HTTPException(status_code=400, detail="Invalid group id")
+    return group_id
 
 
-@router.get("/org/{tenant_id}/pages")
-async def org_pages(tenant_id: str, principal: Principal = Depends(require_super_admin),
-                    db: AsyncSession = Depends(get_db)):
-    """Per-page grant for an organisation (the super-admin's 'what they paid for')."""
-    return await RBACService.get_org_pages(db, _valid_tenant(tenant_id))
+@router.get("/group/{group_id}/pages")
+async def group_pages(group_id: str, principal: Principal = Depends(require_super_admin),
+                      db: AsyncSession = Depends(get_db)):
+    """Ceiling (a): the page POOL a group may grant to roles ('what they paid for')."""
+    return await RBACService.get_group_pages(db, _valid_group(group_id))
 
 
-@router.put("/org/{tenant_id}/page/{module_key}")
-async def set_org_page(tenant_id: str, module_key: str, body: ModuleToggle,
-                       principal: Principal = Depends(require_super_admin),
-                       db: AsyncSession = Depends(get_db)):
-    _valid_tenant(tenant_id)
+@router.put("/group/{group_id}/page/{module_key}")
+async def set_group_page(group_id: str, module_key: str, body: ModuleToggle,
+                         principal: Principal = Depends(require_super_admin),
+                         db: AsyncSession = Depends(get_db)):
+    _valid_group(group_id)
     try:
-        await RBACService.set_org_page(db, tenant_id, module_key, body.enabled, by=_actor(principal))
+        await RBACService.set_group_page(db, group_id, module_key, body.enabled, by=_actor(principal))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"tenant_id": tenant_id, "module_key": module_key, "enabled": body.enabled}
+    return {"group_id": group_id, "module_key": module_key, "enabled": body.enabled}
 
 
-@router.post("/org/{tenant_id}/pages/bulk")
-async def set_org_pages_bulk(tenant_id: str, body: ModuleToggle,
-                             principal: Principal = Depends(require_super_admin),
-                             db: AsyncSession = Depends(get_db)):
-    """Enable or revoke ALL (non-required) pages for an org at once."""
-    _valid_tenant(tenant_id)
-    await RBACService.set_all_org_pages(db, tenant_id, body.enabled, by=_actor(principal))
-    return {"tenant_id": tenant_id, "enabled": body.enabled}
+@router.post("/group/{group_id}/pages/bulk")
+async def set_group_pages_bulk(group_id: str, body: ModuleToggle,
+                               principal: Principal = Depends(require_super_admin),
+                               db: AsyncSession = Depends(get_db)):
+    """Enable or revoke ALL (non-required) pool pages for a group at once."""
+    _valid_group(group_id)
+    await RBACService.set_all_group_pages(db, group_id, body.enabled, by=_actor(principal))
+    return {"group_id": group_id, "enabled": body.enabled}
 
 
-# ---------- admin page grant (super-admin: which pages the ADMIN sees) ----------
-@router.get("/org/{tenant_id}/admin-pages")
-async def org_admin_pages(tenant_id: str, principal: Principal = Depends(require_super_admin),
-                          db: AsyncSession = Depends(get_db)):
-    """Per-page grant for the ADMIN's own sidebar (separate from the distributable
-    org pages). Lists every admin-audience page incl. admin-only tools."""
-    return await RBACService.get_admin_pages(db, _valid_tenant(tenant_id))
+@router.get("/group/{group_id}/admin-pages")
+async def group_admin_pages(group_id: str, principal: Principal = Depends(require_super_admin),
+                            db: AsyncSession = Depends(get_db)):
+    """Ceiling (b): which pages the group's ADMINS see in their own sidebar."""
+    return await RBACService.get_admin_pages(db, _valid_group(group_id))
 
 
-@router.put("/org/{tenant_id}/admin-page/{module_key}")
-async def set_org_admin_page(tenant_id: str, module_key: str, body: ModuleToggle,
-                             principal: Principal = Depends(require_super_admin),
-                             db: AsyncSession = Depends(get_db)):
-    _valid_tenant(tenant_id)
+@router.put("/group/{group_id}/admin-page/{module_key}")
+async def set_group_admin_page(group_id: str, module_key: str, body: ModuleToggle,
+                               principal: Principal = Depends(require_super_admin),
+                               db: AsyncSession = Depends(get_db)):
+    _valid_group(group_id)
     try:
-        await RBACService.set_admin_page(db, tenant_id, module_key, body.enabled, by=_actor(principal))
+        await RBACService.set_admin_page(db, group_id, module_key, body.enabled, by=_actor(principal))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"tenant_id": tenant_id, "module_key": module_key, "enabled": body.enabled}
+    return {"group_id": group_id, "module_key": module_key, "enabled": body.enabled}
 
 
-@router.post("/org/{tenant_id}/admin-pages/bulk")
-async def set_org_admin_pages_bulk(tenant_id: str, body: ModuleToggle,
-                                   principal: Principal = Depends(require_super_admin),
-                                   db: AsyncSession = Depends(get_db)):
-    """Show or hide ALL (non-required) admin pages for an org at once."""
-    _valid_tenant(tenant_id)
-    await RBACService.set_all_admin_pages(db, tenant_id, body.enabled, by=_actor(principal))
-    return {"tenant_id": tenant_id, "enabled": body.enabled}
+@router.post("/group/{group_id}/admin-pages/bulk")
+async def set_group_admin_pages_bulk(group_id: str, body: ModuleToggle,
+                                     principal: Principal = Depends(require_super_admin),
+                                     db: AsyncSession = Depends(get_db)):
+    """Show or hide ALL (non-required) admin pages for a group at once."""
+    _valid_group(group_id)
+    await RBACService.set_all_admin_pages(db, group_id, body.enabled, by=_actor(principal))
+    return {"group_id": group_id, "enabled": body.enabled}
 
 
-# ---------- roles (tier-1: school authority, scoped to own tenant) ----------
-def _role_tenant(principal: Principal) -> str:
-    if not principal.tenant_id:
-        raise HTTPException(status_code=400, detail="No tenant in session.")
-    return principal.tenant_id
+# ---------- roles (tier-1: authority, scoped to own organisation) ----------
+def _role_organisation(principal: Principal) -> str:
+    if not principal.organisation_id:
+        raise HTTPException(status_code=400, detail="No organisation in session.")
+    return principal.organisation_id
 
 
 @router.get("/roles")
 async def list_roles(
     user_type: Optional[str] = None,
+    q: str = "",
+    limit: int = 100,
+    offset: int = 0,
     principal: Principal = Depends(require_authority),
     db: AsyncSession = Depends(get_db),
 ):
-    roles = await RBACService.list_roles(db, _role_tenant(principal), user_type)
-    return [{"id": str(r.id), "role_name": r.role_name, "role_key": r.role_key,
-             "user_type": r.user_type, "description": r.description, "is_default": r.is_default}
-            for r in roles]
+    """Roles for the caller's organisation (envelope {items,total,limit,offset}; `q`
+    matches role name/description). Roles per org are few, so paging is for API
+    consistency — the page is sliced in memory over the org's (bounded) role set."""
+    limit = max(1, min(int(limit or 100), 200))
+    offset = max(0, int(offset or 0))
+    roles = await RBACService.list_roles(db, _role_organisation(principal), user_type)
+    items = [{"id": str(r.id), "role_name": r.role_name, "role_key": r.role_key,
+              "user_type": r.user_type, "description": r.description, "is_default": r.is_default}
+             for r in roles]
+    term = (q or "").strip().lower()
+    if term:
+        items = [x for x in items
+                 if term in (x["role_name"] or "").lower()
+                 or term in (x["description"] or "").lower()]
+    total = len(items)
+    return {"items": items[offset:offset + limit], "total": total,
+            "limit": limit, "offset": offset}
 
 
 @router.post("/roles")
@@ -241,11 +220,11 @@ async def create_role(
 ):
     try:
         role = await RBACService.create_role(
-            db, tenant_id=_role_tenant(principal), user_type=body.user_type,
+            db, organisation_id=_role_organisation(principal), user_type=body.user_type,
             role_name=body.role_name, description=body.description,
             is_default=body.is_default, created_by=principal.user_uuid,
         )
-        # The bulk allow-list write is the dynamic-staff path (no tenant ceiling).
+        # The bulk allow-list write is the dynamic-staff path (no organisation ceiling).
         # Legacy teacher/student/authority roles must use the ceiling-checked
         # per-module toggle endpoints instead.
         if body.modules is not None and role.user_type == catalog.STAFF:
@@ -261,8 +240,8 @@ async def _load_owned_role(db, principal, role_id):
     role = await RBACService.get_role(db, role_id)
     if not role:
         raise HTTPException(status_code=404, detail="Role not found")
-    if not principal.is_super_admin and str(role.tenant_id) != str(principal.tenant_id):
-        raise HTTPException(status_code=403, detail="Role belongs to another school")
+    if not principal.is_super_admin and str(role.organisation_id) != str(principal.organisation_id):
+        raise HTTPException(status_code=403, detail="Role belongs to another organisation")
     return role
 
 
@@ -306,26 +285,32 @@ async def assignable_roles(
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    """Roles the caller may assign when creating a user. An admin (authority) may
-    assign any role in their school; a staff user may assign only the roles their
-    own role was delegated to create."""
-    if not principal.tenant_id:
+    """Roles the caller may assign when creating a user. Page-access model: an admin
+    (authority) may assign any role in their organisation; a staff user who holds the
+    "Staff & Users" page (module 'staff') may assign ANY of the organisation's roles the
+    admin made — granting the page IS the grant to manage users. A staff user without that
+    page gets nothing (they can't open the screen anyway)."""
+    if not principal.organisation_id:
         return []
     if principal.is_authority or principal.is_super_admin:
-        roles = await RBACService.list_roles(db, principal.tenant_id, "staff")
+        roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
         return [{"id": str(r.id), "role_name": r.role_name, "description": r.description}
                 for r in roles]
     if principal.role == "staff":
         role_id = await resolve_role_id(db, "staff", principal.user_id)
         if not role_id:
             return []
-        ids = await RBACService.get_creatable_role_ids(db, role_id)
-        out = []
-        for cid in ids:
-            r = await RBACService.get_role(db, cid)
-            if r and str(r.tenant_id) == str(principal.tenant_id):
-                out.append({"id": str(r.id), "role_name": r.role_name, "description": r.description})
-        return out
+        # Holding the Staff & Users page (respecting the group pool ceiling) is what
+        # lets a role manage users — it can then assign any of the org's staff roles.
+        has_staff_page = await RBACService.has_module_access(
+            db, user_type="staff", organisation_id=principal.organisation_id,
+            role_id=role_id, module_key="staff",
+        )
+        if not has_staff_page:
+            return []
+        roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
+        return [{"id": str(r.id), "role_name": r.role_name, "description": r.description}
+                for r in roles]
     return []
 
 
@@ -366,18 +351,18 @@ async def toggle_role_tab(role_id: str, module_key: str, tab_key: str, body: Mod
 @router.get("/users")
 async def list_users(user_type: str, principal: Principal = Depends(require_authority),
                      db: AsyncSession = Depends(get_db)):
-    """Users of a type in the caller's tenant + their currently-assigned role."""
+    """Users of a type in the caller's organisation + their currently-assigned role."""
     tbl = _IDENTITY_TABLE.get(user_type)
     if not tbl:
         raise HTTPException(status_code=400, detail="invalid user_type")
-    if not principal.tenant_id:
-        raise HTTPException(status_code=400, detail="No tenant in session.")
+    if not principal.organisation_id:
+        raise HTTPException(status_code=400, detail="No organisation in session.")
     rows = (await db.execute(text(
         f"SELECT u.id, u.first_name, u.last_name, u.phone, u.rbac_role_id, r.role_name "
         f"FROM {tbl} u LEFT JOIN rbac_roles r ON r.id = u.rbac_role_id "
-        f"WHERE u.tenant_id = :t AND u.is_deleted = false "
+        f"WHERE u.organisation_id = :t AND u.is_deleted = false "
         f"ORDER BY u.first_name, u.last_name"
-    ), {"t": principal.tenant_id})).fetchall()
+    ), {"t": principal.organisation_id})).fetchall()
     return [{
         "id": str(x[0]),
         "name": f"{x[1] or ''} {x[2] or ''}".strip() or (x[3] or 'User'),
@@ -392,28 +377,6 @@ async def list_users(user_type: str, principal: Principal = Depends(require_auth
 # it was removed.
 
 
-# ---------- tenant ceiling (tier-0: super-admin) ----------
-@router.get("/tenant/{tenant_id}/permissions")
-async def tenant_permissions(tenant_id: str, principal: Principal = Depends(require_super_admin),
-                             db: AsyncSession = Depends(get_db)):
-    return {"tenant_id": tenant_id, "modules": await RBACService.get_tenant_permissions(db, tenant_id)}
-
-
-@router.put("/tenant/{tenant_id}/module/{module_key}")
-async def toggle_tenant_module(tenant_id: str, module_key: str, body: TenantModuleToggle,
-                               principal: Principal = Depends(require_super_admin),
-                               db: AsyncSession = Depends(get_db)):
-    _require_module(module_key)
-    await RBACService.set_tenant_module(db, tenant_id, module_key,
-                                        authority=body.authority_enabled, teacher=body.teacher_enabled,
-                                        student=body.student_enabled, by=principal.role)
-    return {"detail": "updated"}
-
-
-@router.put("/tenant/{tenant_id}/module/{module_key}/tab/{tab_key}")
-async def toggle_tenant_tab(tenant_id: str, module_key: str, tab_key: str, body: ModuleToggle,
-                            principal: Principal = Depends(require_super_admin),
-                            db: AsyncSession = Depends(get_db)):
-    _require_tab(module_key, tab_key)
-    await RBACService.set_tenant_tab(db, tenant_id, module_key, tab_key, body.enabled, by=principal.role)
-    return {"detail": "updated"}
+# (The legacy per-organisation audience ceiling endpoints
+# /organisation/{id}/permissions + /module[/tab] were removed — the ceilings are
+# now per INSTITUTION GROUP, set via /group/{id}/pages + /admin-pages above.)

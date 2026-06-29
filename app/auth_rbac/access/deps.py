@@ -12,7 +12,7 @@ from ..security.principal import Principal
 from .service import RBACService
 
 _IDENTITY_TABLE = {
-    "school_authority": "school_authorities",
+    "authority": "authorities",
     "teacher": "teachers",
     "student": "students",
     "staff": "members",
@@ -42,26 +42,26 @@ async def principal_has_module(db: AsyncSession, principal: Principal, module_ke
     if not role_id:
         return False
     return await RBACService.has_module_access(
-        db, user_type="staff", tenant_id=principal.tenant_uuid,
+        db, user_type="staff", organisation_id=principal.organisation_uuid,
         role_id=role_id, module_key=module_key,
     )
 
 
 async def authority_admin_allowed(db: AsyncSession, principal: Principal, module_keys) -> bool:
-    """For a school_authority (admin) caller: True iff their ADMIN ceiling
-    (admin_enabled) grants at least one of `module_keys` for their tenant. Required
+    """For a authority (admin) caller: True iff their ADMIN ceiling
+    (admin_enabled) grants at least one of `module_keys` for their organisation. Required
     pages bypass; no keys => allowed (not a page-specific route). Default-ON, so
     this only ever denies a page the super-admin EXPLICITLY revoked for this org."""
     if not module_keys:
         return True
     for k in module_keys:
-        if await RBACService.tenant_admin_has_page(db, principal.tenant_uuid, k):
+        if await RBACService.organisation_admin_has_page(db, principal.organisation_uuid, k):
             return True
     return False
 
 
 def require_authority_or_module(*module_keys: str):
-    """ADDITIVE gate. Passes for the school admin / super-admin exactly as
+    """ADDITIVE gate. Passes for the organisation admin / super-admin exactly as
     `require_authority` did, PLUS a dynamic-staff user whose role grants any of
     `module_keys`. The admin is additionally clamped by their 'Admin pages' ceiling
     (admin_enabled) — a super-admin can turn a page off for an org's admin. Non-staff
@@ -99,7 +99,7 @@ def require_staff_or_module(*module_keys: str):
     ) -> Principal:
         if principal.is_super_admin or principal.role == "teacher":
             return principal
-        if principal.role == "school_authority":
+        if principal.role == "authority":
             if await authority_admin_allowed(db, principal, module_keys):
                 return principal
             raise HTTPException(
@@ -118,7 +118,7 @@ def require_staff_or_module(*module_keys: str):
 
 def require_module_access(module_key: str):
     """Router/route dependency: 403 unless the caller's role (intersected with the
-    tenant ceiling) grants this module. Super-admin bypasses."""
+    organisation ceiling) grants this module. Super-admin bypasses."""
     async def _checker(
         principal: Principal = Depends(get_current_principal),
         db: AsyncSession = Depends(get_db),
@@ -129,7 +129,7 @@ def require_module_access(module_key: str):
         allowed = await RBACService.has_module_access(
             db,
             user_type=principal.role,
-            tenant_id=principal.tenant_uuid,
+            organisation_id=principal.organisation_uuid,
             role_id=role_id,
             module_key=module_key,
         )
