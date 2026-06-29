@@ -1,0 +1,151 @@
+# EduAssist Backend - Project Overview
+
+## Project Description
+EduAssist is a comprehensive educational management system backend built with FastAPI and PostgreSQL. It provides APIs for managing schools, students, teachers, assessments, and educational workflows.
+
+## Technology Stack
+- **Backend Framework**: FastAPI (Python)
+- **Database**: PostgreSQL 14
+- **Cache**: Redis
+- **ORM**: SQLAlchemy (async)
+- **Authentication**: JWT-based auth with RBAC
+- **Containerization**: Docker & Docker Compose
+- **Server**: Gunicorn with Uvicorn workers
+
+## Architecture
+**Modular Management-Based Architecture**: Each domain has its own module with models, services, routers, and schemas.
+
+### Core Modules:
+1. **auth_rbac/** - Authentication, authorization, roles, permissions
+2. **tenant_management/** - Multi-tenant support
+3. **student_management/** - Student profiles, enrollment
+4. **teacher_management/** - Teacher profiles, assignments
+5. **class_management/** - Class creation, management
+6. **school_authority_management/** - School admin functions
+7. **assessment_management/** - Quizzes, AI-powered assessments, grading
+8. **exam_management/** - Formal exams, results
+9. **attendance_management/** - Attendance tracking, reports
+10. **timetable_management/** - Schedule management
+11. **notification_management/** - System notifications
+12. **chat_management/** - Real-time messaging
+13. **enrollment_management/** - Student-class enrollment
+
+### Each Module Structure:
+```
+module_name/
+├── models/          # SQLAlchemy models
+├── routers/         # FastAPI route handlers
+├── schemas/         # Pydantic schemas
+├── services/        # Business logic
+└── __init__.py
+```
+
+## Key Features
+
+### Assessment System (Primary Focus)
+- **AI-Powered Quiz Generation**: Automatic question generation using AI
+- **CBSE Curriculum Support**: Aligned with Indian education standards
+- **Multiple Question Types**: MCQ, True/False, Short Answer, Essay
+- **Auto-Grading**: Intelligent grading with AI for subjective answers
+- **Performance Analytics**: Student progress tracking and insights
+- **Adaptive Learning**: Personalized recommendations
+
+### Multi-Tenant Architecture
+- Tenant isolation at database level
+- Role-based access control (RBAC)
+- Hierarchical permissions system
+
+### Real-Time Features
+- WebSocket-based chat system
+- Live notifications
+- Real-time attendance updates
+
+## Database Schema
+- **Base Model**: All models inherit from Base with common fields (id, created_at, updated_at, tenant_id)
+- **Relationships**: Proper foreign key relationships between entities
+- **Indexes**: Optimized for performance with strategic indexing
+- **Migrations**: Alembic for database version control
+
+## API Structure
+- **RESTful APIs**: Standard HTTP methods and status codes
+- **Async Operations**: Full async/await support
+- **Request/Response Models**: Pydantic validation
+- **Error Handling**: Comprehensive error responses
+- **Documentation**: Auto-generated OpenAPI/Swagger docs
+
+## Security
+- **JWT Authentication**: Secure token-based auth
+- **Password Hashing**: Bcrypt for password security
+- **RBAC**: Role-based access control
+- **Tenant Isolation**: Data separation between tenants
+- **Input Validation**: Pydantic schema validation
+
+## Performance Optimizations
+- **Connection Pooling**: SQLAlchemy async engine pools
+- **Redis Caching**: Frequently accessed data caching
+- **Database Indexes**: Strategic indexing for queries
+- **Async Processing**: Non-blocking I/O operations
+
+## Development Setup
+```bash
+# Clone and setup
+git clone <repo>
+cd edu_backend
+
+# Run with Docker
+docker-compose up -d
+
+# Database migrations
+alembic upgrade head
+```
+
+## Environment Configuration
+- **Development**: Local Docker setup
+- **Production**: Gunicorn with multiple workers
+- **Database**: PostgreSQL with connection pooling
+- **Cache**: Redis for session and data caching
+
+## Recent Major Changes
+1. **Directory Restructuring**: Moved from flat structure to modular management-based architecture
+2. **Import Path Updates**: Fixed all imports to use new module structure
+3. **Circular Import Resolution**: Resolved import dependencies
+4. **Assessment Module Enhancement**: Added AI-powered features for quiz generation and grading
+
+## Key Files
+- `app/main.py` - FastAPI application entry point
+- `app/models/base.py` - Base model for all entities
+- `app/core/database.py` - Database configuration
+- `docker-compose.yml` - Container orchestration
+- `alembic/` - Database migration files
+- `requirements.txt` - Python dependencies
+
+## API Endpoints Structure
+- `/auth/*` - Authentication endpoints
+- `/students/*` - Student management
+- `/teachers/*` - Teacher management
+- `/classes/*` - Class management
+- `/assessments/*` - Quiz and assessment APIs
+- `/exams/*` - Formal examination APIs
+- `/attendance/*` - Attendance tracking
+- `/timetable/*` - Schedule management
+- `/notifications/*` - Notification system
+- `/chat/*` - Messaging system
+
+## Current Status
+✅ Application running successfully
+✅ All modules properly structured
+✅ Database connections established
+✅ Redis cache operational
+✅ Multi-worker Gunicorn setup
+✅ Health checks passing
+
+## Future Enhancements
+- Advanced AI analytics for learning insights
+- Mobile app API optimizations
+- Advanced reporting and dashboards
+- Integration with external educational platforms
+- Enhanced real-time collaboration features
+
+---
+Last Updated: January 2026
+Project Status: Active Development

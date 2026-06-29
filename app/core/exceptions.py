@@ -1,7 +1,11 @@
 # app/core/exceptions.py
-"""Custom exceptions for the EduAssist application."""
-from fastapi import HTTPException
+"""Custom exceptions and error handlers for the EduAssist application."""
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 from typing import Any, Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class EduAssistException(HTTPException):
@@ -69,3 +73,59 @@ class DatabaseError(EduAssistException):
                 "message": message
             }
         )
+
+
+# Assessment-specific exceptions
+class AssessmentException(EduAssistException):
+    """Base exception for assessment system"""
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(status_code=status_code, detail=message)
+
+
+class QuizNotFound(EduAssistException):
+    """Exception raised when quiz is not found."""
+    def __init__(self, quiz_id: str = None):
+        message = "Quiz not found"
+        if quiz_id:
+            message += f" with id: {quiz_id}"
+        super().__init__(status_code=404, detail=message)
+
+
+class QuestionNotFound(EduAssistException):
+    """Exception raised when question is not found."""
+    def __init__(self, question_id: str = None):
+        message = "Question not found"
+        if question_id:
+            message += f" with id: {question_id}"
+        super().__init__(status_code=404, detail=message)
+
+
+class AIServiceError(EduAssistException):
+    """Exception raised for AI service errors."""
+    def __init__(self, message: str):
+        super().__init__(
+            status_code=503,
+            detail={
+                "error": "AI Service Error",
+                "message": message
+            }
+        )
+
+
+# FastAPI Error Handlers
+async def eduassist_exception_handler(request: Request, exc: EduAssistException):
+    """Handle custom EduAssist exceptions"""
+    logger.error(f"EduAssist error: {exc.detail} - Path: {request.url.path}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "type": exc.__class__.__name__}
+    )
+
+
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions"""
+    logger.error(f"Unexpected error: {str(exc)} - Path: {request.url.path}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "type": "InternalError"}
+    )

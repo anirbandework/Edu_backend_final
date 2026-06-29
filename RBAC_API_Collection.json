@@ -1,0 +1,627 @@
+{
+  "info": {
+    "name": "RBAC API Collection",
+    "description": "Complete API collection for testing RBAC system with dummy data",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "tenant_id",
+      "value": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "type": "string"
+    },
+    {
+      "key": "principal_id",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "type": "string"
+    },
+    {
+      "key": "teacher_id",
+      "value": "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+      "type": "string"
+    },
+    {
+      "key": "student_id",
+      "value": "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Get User Profile - Principal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/user-profile/{{principal_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "user-profile", "{{principal_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get User Profile - Teacher",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/user-profile/{{teacher_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "user-profile", "{{teacher_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Get User Profile - Student",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/auth/user-profile/{{student_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "user-profile", "{{student_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "User Access",
+      "item": [
+        {
+          "name": "Get Principal Access",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/user/{{principal_id}}/access",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "user", "{{principal_id}}", "access"]
+            }
+          }
+        },
+        {
+          "name": "Get Teacher Access",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/user/{{teacher_id}}/access",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "user", "{{teacher_id}}", "access"]
+            }
+          }
+        },
+        {
+          "name": "Get Student Access",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/user/{{student_id}}/access",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "user", "{{student_id}}", "access"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Super Admin - Tenant Page Access",
+      "item": [
+        {
+          "name": "Get All Available Pages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/super-admin/available-pages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "super-admin", "available-pages"]
+            }
+          }
+        },
+        {
+          "name": "Grant Pages To Tenant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"page_keys\": [\"students\", \"teachers\", \"classes\", \"attendance\", \"grades\", \"reports\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/super-admin/grant-pages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "super-admin", "grant-pages"]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant Pages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/super-admin/tenant/{{tenant_id}}/pages",
+              "host": ["{{base_url}}"],
+              "path": ["api", "super-admin", "tenant", "{{tenant_id}}", "pages"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Role Management",
+      "item": [
+        {
+          "name": "Create Role - Teacher Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role_name\": \"Teacher\",\n  \"description\": \"Standard teacher role with classroom management access\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Create Role - Student Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role_name\": \"Student\",\n  \"description\": \"Standard student role with limited access\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Assign Teacher Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{teacher_id}}\",\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/assign-role",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "assign-role"]
+            }
+          }
+        },
+        {
+          "name": "Assign Student Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{student_id}}\",\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/assign-role",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "assign-role"]
+            }
+          }
+        },
+        {
+          "name": "Get Teacher Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/users/{{teacher_id}}/roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "users", "{{teacher_id}}", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Get Student Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/users/{{student_id}}/roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "users", "{{student_id}}", "roles"]
+            }
+          }
+        },
+        {
+          "name": "Get All User Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/user-roles",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "user-roles"]
+            }
+          }
+        },
+        {
+          "name": "Bulk Assign Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_ids\": [\"{{teacher_id}}\", \"{{student_id}}\"],\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/bulk-assign-role",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "bulk-assign-role"]
+            }
+          }
+        },
+        {
+          "name": "Create Page Permissions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\",\n  \"page_permissions\": [\n    {\n      \"page_key\": \"students\",\n      \"can_read\": true,\n      \"can_write\": true,\n      \"can_delete\": false\n    },\n    {\n      \"page_key\": \"classes\",\n      \"can_read\": true,\n      \"can_write\": false,\n      \"can_delete\": false\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/page-permissions",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "page-permissions"]
+            }
+          }
+        },
+        {
+          "name": "Get Role Page Permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/roles/ROLE_ID/page-permissions",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "roles", "ROLE_ID", "page-permissions"]
+            }
+          }
+        },
+        {
+          "name": "Delete Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/roles/ROLE_ID",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "roles", "ROLE_ID"]
+            }
+          }
+        },
+        {
+          "name": "Remove User Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/role-management/tenants/{{tenant_id}}/users/{{teacher_id}}/roles/ROLE_ID",
+              "host": ["{{base_url}}"],
+              "path": ["api", "role-management", "tenants", "{{tenant_id}}", "users", "{{teacher_id}}", "roles", "ROLE_ID"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Page Permissions",
+      "item": [
+        {
+          "name": "Create Page Permission",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"page_key\": \"students\",\n  \"can_read\": true,\n  \"can_write\": true,\n  \"can_delete\": false\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/role/ROLE_ID",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "role", "ROLE_ID"]
+            }
+          }
+        },
+        {
+          "name": "Get Role Permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/role/ROLE_ID",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "role", "ROLE_ID"]
+            }
+          }
+        },
+        {
+          "name": "Update Role Permissions",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"page_permissions\": [\n    {\n      \"page_key\": \"students\",\n      \"can_read\": true,\n      \"can_write\": true,\n      \"can_delete\": true\n    },\n    {\n      \"page_key\": \"teachers\",\n      \"can_read\": true,\n      \"can_write\": false,\n      \"can_delete\": false\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/role/ROLE_ID",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "role", "ROLE_ID"]
+            }
+          }
+        },
+        {
+          "name": "Seed Default Permissions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/tenant/{{tenant_id}}/seed",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "tenant", "{{tenant_id}}", "seed"]
+            }
+          }
+        },
+        {
+          "name": "Get User Accessible Pages - Principal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/user-pages?user_id={{principal_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "user-pages"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{principal_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User Accessible Pages - Teacher",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/user-pages?user_id={{teacher_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "user-pages"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{teacher_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User Accessible Pages - Student",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/page-permissions/user-pages?user_id={{student_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "page-permissions", "user-pages"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{student_id}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RBAC Management",
+      "item": [
+        {
+          "name": "Get Users For Role Assignment",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/rbac/users?tenant_id={{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "users"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Available Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/rbac/roles?tenant_id={{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "roles"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Assign Role To User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{teacher_id}}\",\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\",\n  \"tenant_id\": \"{{tenant_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/rbac/assign-role",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "assign-role"]
+            }
+          }
+        },
+        {
+          "name": "Remove User Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/rbac/remove-role/{{teacher_id}}?tenant_id={{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "remove-role", "{{teacher_id}}"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Role Permissions With Pages",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/rbac/role-permissions/ROLE_ID?tenant_id={{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "role-permissions", "ROLE_ID"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Role Permissions",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role_id\": \"ROLE_ID_FROM_CREATE_RESPONSE\",\n  \"tenant_id\": \"{{tenant_id}}\",\n  \"page_permissions\": [\n    {\n      \"page_key\": \"students\",\n      \"can_read\": true,\n      \"can_write\": true,\n      \"can_delete\": false\n    },\n    {\n      \"page_key\": \"classes\",\n      \"can_read\": true,\n      \"can_write\": false,\n      \"can_delete\": false\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/rbac/update-role-permissions",
+              "host": ["{{base_url}}"],
+              "path": ["api", "rbac", "update-role-permissions"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

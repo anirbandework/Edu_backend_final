@@ -85,6 +85,7 @@ python-dotenv==1.0.0
 
 # HTTP Client
 httpx==0.25.2
+requests==2.31.0
 
 # AI
 google-generativeai==0.3.2

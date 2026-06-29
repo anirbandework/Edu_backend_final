@@ -1,1 +1,0 @@
-# School Authority routers package
