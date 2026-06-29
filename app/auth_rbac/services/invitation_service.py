@@ -16,13 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import settings
 from ..models.invitation import Invitation
 from ..security.principal import (
-    Principal, ROLE_SUPER_ADMIN, ROLE_AUTHORITY, ROLE_TEACHER, ROLE_STUDENT,
+    Principal, ROLE_SUPER_ADMIN, ROLE_AUTHORITY, ROLE_STAFF,
 )
 
 # who can invite whom
 _ALLOWED_INVITES = {
     ROLE_SUPER_ADMIN: {ROLE_AUTHORITY},
-    ROLE_AUTHORITY: {ROLE_TEACHER, ROLE_STUDENT},
+    ROLE_AUTHORITY: {ROLE_STAFF},
+    ROLE_STAFF: {ROLE_STAFF},   # delegated staff may invite the staff roles they're permitted to create
 }
 
 
@@ -105,6 +106,28 @@ async def get_valid_invitation(db: AsyncSession, token: str) -> Invitation:
     return inv
 
 
+async def get_pending_invitation_by_phone(db: AsyncSession, phone: str) -> Optional[Invitation]:
+    """The newest still-pending, unexpired invitation for a phone. Powers token-less
+    first-login: a created user enters their phone (no link) to set their password."""
+    phone = (phone or "").strip()
+    if not phone:
+        return None
+    inv = (await db.execute(
+        select(Invitation)
+        .where(Invitation.phone == phone, Invitation.status == "pending")
+        .order_by(Invitation.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if not inv:
+        return None
+    expires = inv.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if _now() > expires:
+        return None
+    return inv
+
+
 async def mark_accepted(db: AsyncSession, inv: Invitation, user_id: str) -> None:
     inv.status = "accepted"
     inv.accepted_at = _now()
@@ -113,13 +136,12 @@ async def mark_accepted(db: AsyncSession, inv: Invitation, user_id: str) -> None
 
 
 async def assert_phone_available(db: AsyncSession, phone: str, *, exclude_user_id: Optional[str] = None) -> None:
-    """Raise 409 if any active user (student/teacher/authority) already uses this phone."""
-    from ...student_management.models.student import Student
-    from ...teacher_management.models.teacher import Teacher
+    """Raise 409 if any NON-DELETED user (admin or member) already uses this phone — phone is the login id. Soft-deleted users free their phone."""
+    from ...staff_management.models.member import Member
     from ...school_authority_management.models.school_authority import SchoolAuthority
 
     phone = phone.strip()
-    for model in (SchoolAuthority, Teacher, Student):
+    for model in (SchoolAuthority, Member):
         stmt = select(model.id).where(model.phone == phone)
         if hasattr(model, "is_deleted"):
             stmt = stmt.where(model.is_deleted == False)  # noqa: E712

@@ -9,16 +9,25 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from ...services.base_service import BaseService
 from ..models.enrollment import Enrollment
+from ...staff_management.models.member import Member
 
 
 class EnrollmentService(BaseService[Enrollment]):
     def __init__(self, db: AsyncSession):
         super().__init__(Enrollment, db)
-    
-    async def get_by_student(self, student_id: UUID) -> List[Enrollment]:
-        """Get all enrollments for a specific student"""
+
+    async def _get_member(self, member_id: UUID, tenant_id: Any = None) -> Optional[Member]:
+        """Fetch a non-deleted Member, optionally tenant-scoped."""
+        stmt = select(Member).where(Member.id == member_id, Member.is_deleted == False)
+        if tenant_id is not None:
+            stmt = stmt.where(Member.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_member(self, member_id: UUID) -> List[Enrollment]:
+        """Get all enrollments for a specific member"""
         stmt = select(self.model).where(
-            self.model.student_id == student_id,
+            self.model.member_id == member_id,
             self.model.is_deleted == False
         )
         result = await self.db.execute(stmt)
@@ -33,40 +42,40 @@ class EnrollmentService(BaseService[Enrollment]):
         result = await self.db.execute(stmt)
         return result.scalars().all()
     
-    async def get_by_academic_year(self, academic_year: str, student_id: Optional[UUID] = None, class_id: Optional[UUID] = None) -> List[Enrollment]:
+    async def get_by_academic_year(self, academic_year: str, member_id: Optional[UUID] = None, class_id: Optional[UUID] = None) -> List[Enrollment]:
         """Get enrollments by academic year"""
         stmt = select(self.model).where(
             self.model.academic_year == academic_year,
             self.model.is_deleted == False
         )
-        
-        if student_id:
-            stmt = stmt.where(self.model.student_id == student_id)
+
+        if member_id:
+            stmt = stmt.where(self.model.member_id == member_id)
         if class_id:
             stmt = stmt.where(self.model.class_id == class_id)
-            
+
         result = await self.db.execute(stmt)
         return result.scalars().all()
-    
-    async def get_active_enrollments(self, student_id: Optional[UUID] = None, class_id: Optional[UUID] = None) -> List[Enrollment]:
+
+    async def get_active_enrollments(self, member_id: Optional[UUID] = None, class_id: Optional[UUID] = None) -> List[Enrollment]:
         """Get all active enrollments"""
         stmt = select(self.model).where(
             self.model.status == "active",
             self.model.is_deleted == False
         )
-        
-        if student_id:
-            stmt = stmt.where(self.model.student_id == student_id)
+
+        if member_id:
+            stmt = stmt.where(self.model.member_id == member_id)
         if class_id:
             stmt = stmt.where(self.model.class_id == class_id)
-            
+
         result = await self.db.execute(stmt)
         return result.scalars().all()
-    
-    async def get_by_student_and_class(self, student_id: UUID, class_id: UUID) -> Optional[Enrollment]:
-        """Get specific enrollment by student and class"""
+
+    async def get_by_member_and_class(self, member_id: UUID, class_id: UUID) -> Optional[Enrollment]:
+        """Get specific enrollment by member and class"""
         stmt = select(self.model).where(
-            self.model.student_id == student_id,
+            self.model.member_id == member_id,
             self.model.class_id == class_id,
             self.model.is_deleted == False
         )
@@ -76,49 +85,41 @@ class EnrollmentService(BaseService[Enrollment]):
     async def create(self, obj_in: dict, scope_tenant: Any = None) -> Enrollment:
         """Create a new enrollment, tenant-scoped and validated.
 
-        The target class and student must belong to the same tenant; when scope_tenant
+        The target class and member must belong to the same tenant; when scope_tenant
         is given (a non-super-admin caller) that tenant is enforced, so nobody can enroll
-        across schools. tenant_id is denormalized onto the enrollment from the class."""
+        across schools. tenant_id is denormalized onto the enrollment from the class.
+        A "student" here is simply a MEMBER enrolled in a class — grade/section live on
+        the class, not the member, so there is nothing to sync back onto the member."""
         try:
-            student_id = obj_in.get("student_id")
+            member_id = obj_in.get("member_id")
             class_id = obj_in.get("class_id")
-            if not student_id or not class_id:
-                raise HTTPException(status_code=400, detail="student_id and class_id are required")
+            if not member_id or not class_id:
+                raise HTTPException(status_code=400, detail="member_id and class_id are required")
 
             from ...class_management.services.class_service import ClassService
-            from ...student_management.services.student_service import StudentService
             class_service = ClassService(self.db)
-            student_service = StudentService(self.db)
 
             # Tenant-scope BOTH lookups: a caller can only touch their own tenant's rows.
             class_obj = await class_service.get(class_id, tenant_id=scope_tenant)
             if not class_obj:
                 raise HTTPException(status_code=404, detail="Class not found")
-            student = await student_service.get(student_id, tenant_id=scope_tenant)
-            if not student:
-                raise HTTPException(status_code=404, detail="Student not found")
-            # Integrity: student and class must share a tenant (also blocks a super-admin
+            member = await self._get_member(member_id, tenant_id=scope_tenant)
+            if not member:
+                raise HTTPException(status_code=404, detail="Member not found")
+            # Integrity: member and class must share a tenant (also blocks a super-admin
             # accidentally mixing schools).
-            if str(student.tenant_id) != str(class_obj.tenant_id):
-                raise HTTPException(status_code=400, detail="Student and class belong to different schools")
+            if str(member.tenant_id) != str(class_obj.tenant_id):
+                raise HTTPException(status_code=400, detail="Member and class belong to different schools")
 
-            existing = await self.get_by_student_and_class(student_id, class_id)
+            existing = await self.get_by_member_and_class(member_id, class_id)
             if existing:
-                raise HTTPException(status_code=400, detail="Student is already enrolled in this class")
+                raise HTTPException(status_code=400, detail="Member is already enrolled in this class")
 
             if class_obj.current_students >= class_obj.maximum_students:
                 raise HTTPException(status_code=400, detail=f"Class is full. Maximum capacity: {class_obj.maximum_students}")
 
             obj_in["tenant_id"] = class_obj.tenant_id
             enrollment = await super().create(obj_in)
-
-            # Keep the student's grade/section in sync with the class they joined.
-            if student.grade_level != class_obj.grade_level:
-                await student_service.update(student.id, {
-                    "grade_level": class_obj.grade_level,
-                    "section": class_obj.section,
-                    "academic_year": class_obj.academic_year,
-                }, tenant_id=scope_tenant)
 
             await class_service.update_student_count(class_obj.id, class_obj.current_students + 1)
             return enrollment
@@ -159,15 +160,15 @@ class EnrollmentService(BaseService[Enrollment]):
         self,
         page: int = 1,
         size: int = 20,
-        student_id: Optional[UUID] = None,
+        member_id: Optional[UUID] = None,
         class_id: Optional[UUID] = None,
         academic_year: Optional[str] = None,
         status: Optional[str] = None
     ) -> dict:
         """Get paginated enrollments"""
         filters = {}
-        if student_id:
-            filters["student_id"] = student_id
+        if member_id:
+            filters["member_id"] = member_id
         if class_id:
             filters["class_id"] = class_id
         if academic_year:
@@ -177,8 +178,8 @@ class EnrollmentService(BaseService[Enrollment]):
             
         return await self.get_paginated(page=page, size=size, **filters)
     
-    async def bulk_enroll_students(self, class_id: UUID, student_ids: List[UUID], academic_year: str, tenant_id: Any = None) -> dict:
-        """Bulk enroll multiple students in a class using raw SQL for performance"""
+    async def bulk_enroll_students(self, class_id: UUID, member_ids: List[UUID], academic_year: str, tenant_id: Any = None) -> dict:
+        """Bulk enroll multiple members in a class using raw SQL for performance"""
         # Tenant-scope the class: a caller can't enroll into another school's class.
         from ...class_management.services.class_service import ClassService
         class_service = ClassService(self.db)
@@ -186,62 +187,62 @@ class EnrollmentService(BaseService[Enrollment]):
 
         if not class_obj:
             raise HTTPException(status_code=404, detail="Class not found")
-        
+
         available_spots = class_obj.maximum_students - class_obj.current_students
-        
-        if len(student_ids) > available_spots:
+
+        if len(member_ids) > available_spots:
             raise HTTPException(
                 status_code=400,
-                detail=f"Not enough spots available. Available: {available_spots}, Requested: {len(student_ids)}"
+                detail=f"Not enough spots available. Available: {available_spots}, Requested: {len(member_ids)}"
             )
-        
+
         # Use raw SQL for bulk operations
         try:
             # 1. Check for existing enrollments using raw SQL
             existing_check_sql = text("""
-                SELECT student_id 
-                FROM enrollments 
-                WHERE class_id = :class_id 
-                AND student_id = ANY(:student_ids)
+                SELECT member_id
+                FROM enrollments
+                WHERE class_id = :class_id
+                AND member_id = ANY(:member_ids)
                 AND is_deleted = false
             """)
-            
+
             result = await self.db.execute(
-                existing_check_sql, 
+                existing_check_sql,
                 {
                     "class_id": class_id,
-                    "student_ids": [str(sid) for sid in student_ids]
+                    "member_ids": [str(sid) for sid in member_ids]
                 }
             )
-            existing_student_ids = {str(row[0]) for row in result.fetchall()}
-            
-            # Filter out students who are already enrolled
-            new_student_ids = [sid for sid in student_ids if str(sid) not in existing_student_ids]
+            existing_member_ids = {str(row[0]) for row in result.fetchall()}
 
-            # Restrict to students that actually belong to this class's tenant (integrity).
-            valid_sql = text("SELECT id FROM students WHERE id = ANY(:sids) AND tenant_id = :tid AND is_deleted = false")
-            vres = await self.db.execute(valid_sql, {"sids": [str(s) for s in new_student_ids], "tid": class_obj.tenant_id})
+            # Filter out members who are already enrolled
+            new_member_ids = [sid for sid in member_ids if str(sid) not in existing_member_ids]
+
+            # Restrict to members that actually belong to this class's tenant (integrity).
+            valid_sql = text("SELECT id FROM members WHERE id = ANY(:sids) AND tenant_id = :tid AND is_deleted = false")
+            vres = await self.db.execute(valid_sql, {"sids": [str(s) for s in new_member_ids], "tid": class_obj.tenant_id})
             valid_ids = {str(r[0]) for r in vres.fetchall()}
-            new_student_ids = [sid for sid in new_student_ids if str(sid) in valid_ids]
+            new_member_ids = [sid for sid in new_member_ids if str(sid) in valid_ids]
 
-            if not new_student_ids:
+            if not new_member_ids:
                 return {
                     "successful_enrollments": 0,
-                    "failed_enrollments": len(student_ids),
+                    "failed_enrollments": len(member_ids),
                     "successful": [],
-                    "failed": [{"student_id": str(sid), "reason": "Already enrolled"} for sid in student_ids],
+                    "failed": [{"member_id": str(sid), "reason": "Already enrolled"} for sid in member_ids],
                     "class_capacity_after": f"{class_obj.current_students}/{class_obj.maximum_students}"
                 }
-            
+
             # 2. Bulk insert enrollments using raw SQL
             now = datetime.utcnow()
             enrollment_data = []
-            
-            for student_id in new_student_ids:
+
+            for member_id in new_member_ids:
                 enrollment_data.append({
                     "id": str(uuid.uuid4()),
                     "tenant_id": str(class_obj.tenant_id),
-                    "student_id": str(student_id),
+                    "member_id": str(member_id),
                     "class_id": str(class_id),
                     "enrollment_date": now,
                     "academic_year": academic_year,
@@ -254,40 +255,40 @@ class EnrollmentService(BaseService[Enrollment]):
             # Execute bulk insert
             bulk_insert_sql = text("""
                 INSERT INTO enrollments (
-                    id, tenant_id, student_id, class_id, enrollment_date,
+                    id, tenant_id, member_id, class_id, enrollment_date,
                     academic_year, status, created_at, updated_at, is_deleted
                 ) VALUES (
-                    :id, :tenant_id, :student_id, :class_id, :enrollment_date,
+                    :id, :tenant_id, :member_id, :class_id, :enrollment_date,
                     :academic_year, :status, :created_at, :updated_at, :is_deleted
                 )
             """)
-            
+
             await self.db.execute(bulk_insert_sql, enrollment_data)
-            
+
             # 3. Update class student count using raw SQL
             update_count_sql = text("""
-                UPDATE classes 
+                UPDATE classes
                 SET current_students = current_students + :increment,
                     updated_at = :updated_at
                 WHERE id = :class_id
             """)
-            
+
             await self.db.execute(
                 update_count_sql,
                 {
-                    "increment": len(new_student_ids),
+                    "increment": len(new_member_ids),
                     "updated_at": now,
                     "class_id": class_id
                 }
             )
-            
+
             await self.db.commit()
-            
+
             # Prepare response
-            successful = [{"student_id": str(sid)} for sid in new_student_ids]
-            failed = [{"student_id": str(sid), "reason": "Already enrolled"} for sid in existing_student_ids]
-            
-            new_total = class_obj.current_students + len(new_student_ids)
+            successful = [{"member_id": str(sid)} for sid in new_member_ids]
+            failed = [{"member_id": str(sid), "reason": "Already enrolled"} for sid in existing_member_ids]
+
+            new_total = class_obj.current_students + len(new_member_ids)
             
             return {
                 "successful_enrollments": len(successful),
@@ -302,54 +303,30 @@ class EnrollmentService(BaseService[Enrollment]):
             raise HTTPException(status_code=500, detail=f"Bulk enrollment failed: {str(e)}")
     
     async def academic_year_rollover(self, current_year: str, new_year: str, tenant_id: UUID) -> dict:
-        """Promote all students to next grade level using raw SQL"""
+        """Roll over the academic year using raw SQL.
+
+        Grade/section live on the CLASS, not on the member, so there is no per-member
+        grade to promote here — we simply close out the prior year's active enrollments.
+        """
         try:
-            # 1. Get current enrollments count
+            # 1. Get current enrollments count (distinct members)
             count_sql = text("""
-                SELECT COUNT(DISTINCT e.student_id) as student_count
+                SELECT COUNT(DISTINCT e.member_id) as member_count
                 FROM enrollments e
-                JOIN students s ON e.student_id = s.id
                 JOIN classes c ON e.class_id = c.id
                 WHERE e.academic_year = :current_year
                 AND c.tenant_id = :tenant_id
                 AND e.status = 'active'
                 AND e.is_deleted = false
             """)
-            
+
             result = await self.db.execute(
                 count_sql,
                 {"current_year": current_year, "tenant_id": tenant_id}
             )
-            student_count = result.scalar()
-            
-            # 2. Update student grade levels (promote)
-            promote_students_sql = text("""
-                UPDATE students 
-                SET grade_level = grade_level + 1,
-                    academic_year = :new_year,
-                    updated_at = :updated_at
-                WHERE id IN (
-                    SELECT DISTINCT e.student_id 
-                    FROM enrollments e
-                    JOIN classes c ON e.class_id = c.id
-                    WHERE e.academic_year = :current_year
-                    AND c.tenant_id = :tenant_id
-                    AND e.status = 'active'
-                    AND e.is_deleted = false
-                )
-            """)
-            
-            await self.db.execute(
-                promote_students_sql,
-                {
-                    "new_year": new_year,
-                    "current_year": current_year,
-                    "tenant_id": tenant_id,
-                    "updated_at": datetime.utcnow()
-                }
-            )
-            
-            # 3. Mark old enrollments as completed
+            member_count = result.scalar()
+
+            # 2. Mark old enrollments as completed
             complete_enrollments_sql = text("""
                 UPDATE enrollments
                 SET status = 'completed',
@@ -371,9 +348,9 @@ class EnrollmentService(BaseService[Enrollment]):
             )
             
             await self.db.commit()
-            
+
             return {
-                "promoted_students": student_count,
+                "promoted_students": member_count,
                 "previous_academic_year": current_year,
                 "new_academic_year": new_year,
                 "tenant_id": str(tenant_id),
@@ -421,8 +398,8 @@ class EnrollmentService(BaseService[Enrollment]):
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk status update failed: {str(e)}")
     
-    async def bulk_transfer_students(self, student_ids: List[UUID], from_class_id: UUID, to_class_id: UUID, academic_year: str, tenant_id: Any = None) -> dict:
-        """Bulk transfer students between classes using raw SQL"""
+    async def bulk_transfer_students(self, member_ids: List[UUID], from_class_id: UUID, to_class_id: UUID, academic_year: str, tenant_id: Any = None) -> dict:
+        """Bulk transfer members between classes using raw SQL"""
         try:
             # Both classes must belong to the caller's tenant.
             from ...class_management.services.class_service import ClassService
@@ -434,52 +411,52 @@ class EnrollmentService(BaseService[Enrollment]):
             if not source_class:
                 raise HTTPException(status_code=404, detail="Source class not found")
 
-            # Only transfer students that belong to this tenant.
-            vsql = text("SELECT id FROM students WHERE id = ANY(:sids) AND tenant_id = :tid AND is_deleted = false")
-            vres = await self.db.execute(vsql, {"sids": [str(s) for s in student_ids], "tid": target_class.tenant_id})
-            student_ids = [r[0] for r in vres.fetchall()]
-            if not student_ids:
-                raise HTTPException(status_code=400, detail="No valid students to transfer")
+            # Only transfer members that belong to this tenant.
+            vsql = text("SELECT id FROM members WHERE id = ANY(:sids) AND tenant_id = :tid AND is_deleted = false")
+            vres = await self.db.execute(vsql, {"sids": [str(s) for s in member_ids], "tid": target_class.tenant_id})
+            member_ids = [r[0] for r in vres.fetchall()]
+            if not member_ids:
+                raise HTTPException(status_code=400, detail="No valid members to transfer")
 
             available_spots = target_class.maximum_students - target_class.current_students
-            
-            if len(student_ids) > available_spots:
+
+            if len(member_ids) > available_spots:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Not enough spots in target class. Available: {available_spots}, Requested: {len(student_ids)}"
+                    detail=f"Not enough spots in target class. Available: {available_spots}, Requested: {len(member_ids)}"
                 )
-            
+
             # 1. Deactivate old enrollments
             deactivate_sql = text("""
                 UPDATE enrollments
                 SET status = 'transferred',
                     updated_at = :updated_at
-                WHERE student_id = ANY(:student_ids)
+                WHERE member_id = ANY(:member_ids)
                 AND class_id = :from_class_id
                 AND academic_year = :academic_year
                 AND status = 'active'
                 AND is_deleted = false
             """)
-            
+
             await self.db.execute(
                 deactivate_sql,
                 {
-                    "student_ids": [str(sid) for sid in student_ids],
+                    "member_ids": [str(sid) for sid in member_ids],
                     "from_class_id": from_class_id,
                     "academic_year": academic_year,
                     "updated_at": datetime.utcnow()
                 }
             )
-            
+
             # 2. Create new enrollments
             now = datetime.utcnow()
             new_enrollments = []
-            
-            for student_id in student_ids:
+
+            for member_id in member_ids:
                 new_enrollments.append({
                     "id": str(uuid.uuid4()),
                     "tenant_id": str(target_class.tenant_id),
-                    "student_id": str(student_id),
+                    "member_id": str(member_id),
                     "class_id": str(to_class_id),
                     "enrollment_date": now,
                     "academic_year": academic_year,
@@ -491,14 +468,14 @@ class EnrollmentService(BaseService[Enrollment]):
 
             create_sql = text("""
                 INSERT INTO enrollments (
-                    id, tenant_id, student_id, class_id, enrollment_date,
+                    id, tenant_id, member_id, class_id, enrollment_date,
                     academic_year, status, created_at, updated_at, is_deleted
                 ) VALUES (
-                    :id, :tenant_id, :student_id, :class_id, :enrollment_date,
+                    :id, :tenant_id, :member_id, :class_id, :enrollment_date,
                     :academic_year, :status, :created_at, :updated_at, :is_deleted
                 )
             """)
-            
+
             await self.db.execute(create_sql, new_enrollments)
             
             # 3. Update class student counts
@@ -513,7 +490,7 @@ class EnrollmentService(BaseService[Enrollment]):
             await self.db.execute(
                 decrease_sql,
                 {
-                    "decrement": len(student_ids),
+                    "decrement": len(member_ids),
                     "updated_at": now,
                     "class_id": from_class_id
                 }
@@ -530,16 +507,16 @@ class EnrollmentService(BaseService[Enrollment]):
             await self.db.execute(
                 increase_sql,
                 {
-                    "increment": len(student_ids),
+                    "increment": len(member_ids),
                     "updated_at": now,
                     "class_id": to_class_id
                 }
             )
-            
+
             await self.db.commit()
-            
+
             return {
-                "transferred_students": len(student_ids),
+                "transferred_students": len(member_ids),
                 "from_class_id": str(from_class_id),
                 "to_class_id": str(to_class_id),
                 "academic_year": academic_year,
@@ -579,7 +556,7 @@ class EnrollmentService(BaseService[Enrollment]):
             for idx, enrollment_data in enumerate(enrollments_data):
                 try:
                     # Validate required fields
-                    required_fields = ["student_id", "class_id", "academic_year"]
+                    required_fields = ["member_id", "class_id", "academic_year"]
                     for field in required_fields:
                         if not enrollment_data.get(field):
                             validation_errors.append(f"Row {idx + 1}: Missing required field '{field}'")
@@ -601,7 +578,7 @@ class EnrollmentService(BaseService[Enrollment]):
                     enrollment_record = {
                         "id": str(uuid.uuid4()),
                         "tenant_id": class_tenant,
-                        "student_id": str(enrollment_data["student_id"]),
+                        "member_id": str(enrollment_data["member_id"]),
                         "class_id": cid,
                         "enrollment_date": enrollment_data.get("enrollment_date", now),
                         "academic_year": enrollment_data["academic_year"],
@@ -624,12 +601,12 @@ class EnrollmentService(BaseService[Enrollment]):
             # Bulk insert using raw SQL
             bulk_insert_sql = text("""
                 INSERT INTO enrollments (
-                    id, tenant_id, student_id, class_id, enrollment_date, academic_year,
+                    id, tenant_id, member_id, class_id, enrollment_date, academic_year,
                     status, created_at, updated_at, is_deleted
                 ) VALUES (
-                    :id, :tenant_id, :student_id, :class_id, :enrollment_date, :academic_year,
+                    :id, :tenant_id, :member_id, :class_id, :enrollment_date, :academic_year,
                     :status, :created_at, :updated_at, :is_deleted
-                ) ON CONFLICT (student_id, class_id, academic_year) DO NOTHING
+                ) ON CONFLICT (member_id, class_id, academic_year) DO NOTHING
             """)
 
             if insert_data:
@@ -652,7 +629,11 @@ class EnrollmentService(BaseService[Enrollment]):
             raise HTTPException(status_code=500, detail=f"Bulk import failed: {str(e)}")
 
     async def bulk_enroll_by_grade(self, grade_level: int, target_class_ids: List[UUID], academic_year: str, tenant_id: UUID) -> dict:
-        """Bulk enroll students by grade level across multiple classes"""
+        """Bulk enroll members across multiple classes for a grade.
+
+        Grade lives on the CLASS (the target classes are the grade), not on the member,
+        so we distribute the tenant's unenrolled members across the supplied classes.
+        """
         try:
             # Restrict target classes to the caller's tenant (and avoid div-by-zero below).
             if target_class_ids:
@@ -664,59 +645,57 @@ class EnrollmentService(BaseService[Enrollment]):
             if not target_class_ids:
                 raise HTTPException(status_code=400, detail="No valid target classes for this tenant")
 
-            # Get students at the specified grade level who aren't enrolled
-            unenrolled_students_sql = text("""
-                SELECT s.id
-                FROM students s
-                LEFT JOIN enrollments e ON s.id = e.student_id 
-                    AND e.academic_year = :academic_year 
-                    AND e.status = 'active' 
+            # Get members who aren't enrolled for this academic year
+            unenrolled_members_sql = text("""
+                SELECT m.id
+                FROM members m
+                LEFT JOIN enrollments e ON m.id = e.member_id
+                    AND e.academic_year = :academic_year
+                    AND e.status = 'active'
                     AND e.is_deleted = false
-                WHERE s.tenant_id = :tenant_id
-                AND s.grade_level = :grade_level
-                AND s.is_deleted = false
-                AND s.status = 'active'
+                WHERE m.tenant_id = :tenant_id
+                AND m.is_deleted = false
+                AND m.status = 'active'
                 AND e.id IS NULL
             """)
-            
+
             result = await self.db.execute(
-                unenrolled_students_sql,
+                unenrolled_members_sql,
                 {
                     "tenant_id": tenant_id,
-                    "grade_level": grade_level,
                     "academic_year": academic_year
                 }
             )
-            
-            unenrolled_student_ids = [row[0] for row in result.fetchall()]
-            
-            if not unenrolled_student_ids:
+
+            unenrolled_member_ids = [row[0] for row in result.fetchall()]
+
+            if not unenrolled_member_ids:
                 return {
                     "enrolled_students": 0,
-                    "message": f"No unenrolled students found at grade level {grade_level}",
+                    "message": f"No unenrolled members found for grade level {grade_level}",
                     "status": "success"
                 }
-            
-            # Distribute students across target classes
+
+            # Distribute members across target classes
             now = datetime.utcnow()
             enrollment_data = []
-            students_per_class = len(unenrolled_student_ids) // len(target_class_ids)
-            remaining_students = len(unenrolled_student_ids) % len(target_class_ids)
-            
-            student_index = 0
+            members_per_class = len(unenrolled_member_ids) // len(target_class_ids)
+            remaining_members = len(unenrolled_member_ids) % len(target_class_ids)
+
+            member_index = 0
             for i, class_id in enumerate(target_class_ids):
-                # Calculate how many students for this class
-                students_for_this_class = students_per_class
-                if i < remaining_students:
-                    students_for_this_class += 1
-                
-                # Assign students to this class
-                for _ in range(students_for_this_class):
-                    if student_index < len(unenrolled_student_ids):
+                # Calculate how many members for this class
+                members_for_this_class = members_per_class
+                if i < remaining_members:
+                    members_for_this_class += 1
+
+                # Assign members to this class
+                for _ in range(members_for_this_class):
+                    if member_index < len(unenrolled_member_ids):
                         enrollment_data.append({
                             "id": str(uuid.uuid4()),
                             "tenant_id": str(tenant_id),
-                            "student_id": str(unenrolled_student_ids[student_index]),
+                            "member_id": str(unenrolled_member_ids[member_index]),
                             "class_id": str(class_id),
                             "enrollment_date": now,
                             "academic_year": academic_year,
@@ -725,15 +704,15 @@ class EnrollmentService(BaseService[Enrollment]):
                             "updated_at": now,
                             "is_deleted": False
                         })
-                        student_index += 1
+                        member_index += 1
 
             # Execute bulk insert
             bulk_insert_sql = text("""
                 INSERT INTO enrollments (
-                    id, tenant_id, student_id, class_id, enrollment_date, academic_year,
+                    id, tenant_id, member_id, class_id, enrollment_date, academic_year,
                     status, created_at, updated_at, is_deleted
                 ) VALUES (
-                    :id, :tenant_id, :student_id, :class_id, :enrollment_date, :academic_year,
+                    :id, :tenant_id, :member_id, :class_id, :enrollment_date, :academic_year,
                     :status, :created_at, :updated_at, :is_deleted
                 )
             """)
@@ -778,17 +757,17 @@ class EnrollmentService(BaseService[Enrollment]):
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk enrollment by grade failed: {str(e)}")
 
-    async def bulk_withdraw_students(self, student_ids: List[UUID], academic_year: str, withdrawal_reason: str = "Withdrawn", tenant_id: Any = None) -> dict:
-        """Bulk withdraw students from all enrollments (tenant-scoped)."""
+    async def bulk_withdraw_students(self, member_ids: List[UUID], academic_year: str, withdrawal_reason: str = "Withdrawn", tenant_id: Any = None) -> dict:
+        """Bulk withdraw members from all enrollments (tenant-scoped)."""
         try:
-            if not student_ids:
-                raise HTTPException(status_code=400, detail="No student IDs provided")
+            if not member_ids:
+                raise HTTPException(status_code=400, detail="No member IDs provided")
 
             withdraw_sql = text("""
                 UPDATE enrollments
                 SET status = :withdrawal_reason,
                     updated_at = :updated_at
-                WHERE student_id = ANY(:student_ids)
+                WHERE member_id = ANY(:member_ids)
                 AND academic_year = :academic_year
                 AND (CAST(:tenant_id AS uuid) IS NULL OR tenant_id = CAST(:tenant_id AS uuid))
                 AND status = 'active'
@@ -800,36 +779,36 @@ class EnrollmentService(BaseService[Enrollment]):
                 {
                     "withdrawal_reason": withdrawal_reason,
                     "updated_at": datetime.utcnow(),
-                    "student_ids": [str(sid) for sid in student_ids],
+                    "member_ids": [str(sid) for sid in member_ids],
                     "academic_year": academic_year,
                     "tenant_id": str(tenant_id) if tenant_id else None,
                 }
             )
-            
+
             # Update class student counts (decrease)
             update_counts_sql = text("""
-                UPDATE classes 
+                UPDATE classes
                 SET current_students = (
-                    SELECT COUNT(*) 
-                    FROM enrollments 
-                    WHERE class_id = classes.id 
-                    AND status = 'active' 
+                    SELECT COUNT(*)
+                    FROM enrollments
+                    WHERE class_id = classes.id
+                    AND status = 'active'
                     AND is_deleted = false
                 ),
                 updated_at = :updated_at
                 WHERE id IN (
-                    SELECT DISTINCT class_id 
-                    FROM enrollments 
-                    WHERE student_id = ANY(:student_ids)
+                    SELECT DISTINCT class_id
+                    FROM enrollments
+                    WHERE member_id = ANY(:member_ids)
                     AND academic_year = :academic_year
                 )
             """)
-            
+
             await self.db.execute(
                 update_counts_sql,
                 {
                     "updated_at": datetime.utcnow(),
-                    "student_ids": [str(sid) for sid in student_ids],
+                    "member_ids": [str(sid) for sid in member_ids],
                     "academic_year": academic_year
                 }
             )
@@ -851,83 +830,73 @@ class EnrollmentService(BaseService[Enrollment]):
             raise HTTPException(status_code=500, detail=f"Bulk withdrawal failed: {str(e)}")
 
     async def bulk_auto_assign_enrollments(self, tenant_id: UUID, academic_year: str, grade_level: Optional[int] = None) -> dict:
-        """Auto-assign unenrolled students to available classes with capacity"""
+        """Auto-assign unenrolled members to available classes with capacity.
+
+        Grade lives on the CLASS, not the member, so the optional grade_level filters
+        the candidate CLASSES; members are then packed into whatever capacity exists.
+        """
         try:
-            # Get unenrolled students
-            unenrolled_query = """
-                SELECT s.id, s.grade_level
-                FROM students s
-                LEFT JOIN enrollments e ON s.id = e.student_id 
-                    AND e.academic_year = :academic_year 
-                    AND e.status = 'active' 
+            # Get unenrolled members for this academic year
+            unenrolled_query = text("""
+                SELECT m.id
+                FROM members m
+                LEFT JOIN enrollments e ON m.id = e.member_id
+                    AND e.academic_year = :academic_year
+                    AND e.status = 'active'
                     AND e.is_deleted = false
-                WHERE s.tenant_id = :tenant_id
-                AND s.is_deleted = false
-                AND s.status = 'active'
+                WHERE m.tenant_id = :tenant_id
+                AND m.is_deleted = false
+                AND m.status = 'active'
                 AND e.id IS NULL
-            """
-            
+            """)
+
             params = {"tenant_id": tenant_id, "academic_year": academic_year}
-            
-            if grade_level is not None:
-                unenrolled_query += " AND s.grade_level = :grade_level"
-                params["grade_level"] = grade_level
-            
-            result = await self.db.execute(text(unenrolled_query), params)
-            unenrolled_students = result.fetchall()
-            
-            if not unenrolled_students:
+
+            result = await self.db.execute(unenrolled_query, params)
+            unenrolled_members = [row[0] for row in result.fetchall()]
+
+            if not unenrolled_members:
                 return {
                     "assigned_students": 0,
-                    "message": "No unenrolled students found",
+                    "message": "No unenrolled members found",
                     "status": "success"
                 }
-            
-            # Group students by grade level
-            students_by_grade = {}
-            for student_id, student_grade in unenrolled_students:
-                if student_grade not in students_by_grade:
-                    students_by_grade[student_grade] = []
-                students_by_grade[student_grade].append(student_id)
-            
+
             assigned_count = 0
             now = datetime.utcnow()
-            
-            for grade, student_list in students_by_grade.items():
-                # Get available classes for this grade
-                available_classes_sql = text("""
-                    SELECT id, maximum_students, current_students
-                    FROM classes
-                    WHERE tenant_id = :tenant_id
-                    AND grade_level = :grade_level
-                    AND academic_year = :academic_year
-                    AND is_active = true
-                    AND is_deleted = false
-                    AND current_students < maximum_students
-                    ORDER BY (maximum_students - current_students) DESC
-                """)
-                
-                result = await self.db.execute(
-                    available_classes_sql,
-                    {"tenant_id": tenant_id, "grade_level": grade, "academic_year": academic_year}
-                )
-                available_classes = result.fetchall()
-                
-                if not available_classes:
-                    continue
-                
-                # Assign students to classes
+
+            # Get available classes (optionally scoped to a grade) ordered by free capacity.
+            available_classes_query = """
+                SELECT id, maximum_students, current_students
+                FROM classes
+                WHERE tenant_id = :tenant_id
+                AND academic_year = :academic_year
+                AND is_active = true
+                AND is_deleted = false
+                AND current_students < maximum_students
+            """
+            class_params = {"tenant_id": tenant_id, "academic_year": academic_year}
+            if grade_level is not None:
+                available_classes_query += " AND grade_level = :grade_level"
+                class_params["grade_level"] = grade_level
+            available_classes_query += " ORDER BY (maximum_students - current_students) DESC"
+
+            result = await self.db.execute(text(available_classes_query), class_params)
+            available_classes = result.fetchall()
+
+            if available_classes:
+                # Pack members into classes with capacity.
                 enrollment_data = []
-                student_index = 0
-                
+                member_index = 0
+
                 for class_id, max_capacity, current_students in available_classes:
                     available_spots = max_capacity - current_students
-                    
-                    while available_spots > 0 and student_index < len(student_list):
+
+                    while available_spots > 0 and member_index < len(unenrolled_members):
                         enrollment_data.append({
                             "id": str(uuid.uuid4()),
                             "tenant_id": str(tenant_id),
-                            "student_id": str(student_list[student_index]),
+                            "member_id": str(unenrolled_members[member_index]),
                             "class_id": str(class_id),
                             "enrollment_date": now,
                             "academic_year": academic_year,
@@ -936,48 +905,47 @@ class EnrollmentService(BaseService[Enrollment]):
                             "updated_at": now,
                             "is_deleted": False
                         })
-                        student_index += 1
+                        member_index += 1
                         available_spots -= 1
 
                 if enrollment_data:
-                    # Execute bulk insert for this grade
                     bulk_insert_sql = text("""
                         INSERT INTO enrollments (
-                            id, tenant_id, student_id, class_id, enrollment_date, academic_year,
+                            id, tenant_id, member_id, class_id, enrollment_date, academic_year,
                             status, created_at, updated_at, is_deleted
                         ) VALUES (
-                            :id, :tenant_id, :student_id, :class_id, :enrollment_date, :academic_year,
+                            :id, :tenant_id, :member_id, :class_id, :enrollment_date, :academic_year,
                             :status, :created_at, :updated_at, :is_deleted
                         )
                     """)
-                    
+
                     await self.db.execute(bulk_insert_sql, enrollment_data)
                     assigned_count += len(enrollment_data)
-                    
+
                     # Update class counts
                     class_counts = {}
                     for enrollment in enrollment_data:
-                        class_id = enrollment["class_id"]
-                        class_counts[class_id] = class_counts.get(class_id, 0) + 1
-                    
-                    for class_id, count in class_counts.items():
+                        cid = enrollment["class_id"]
+                        class_counts[cid] = class_counts.get(cid, 0) + 1
+
+                    for cid, count in class_counts.items():
                         update_count_sql = text("""
-                            UPDATE classes 
+                            UPDATE classes
                             SET current_students = current_students + :increment,
                                 updated_at = :updated_at
                             WHERE id = :class_id
                         """)
-                        
+
                         await self.db.execute(
                             update_count_sql,
-                            {"increment": count, "updated_at": now, "class_id": class_id}
+                            {"increment": count, "updated_at": now, "class_id": cid}
                         )
-            
+
             await self.db.commit()
-            
+
             return {
                 "assigned_students": assigned_count,
-                "total_unenrolled": len(unenrolled_students),
+                "total_unenrolled": len(unenrolled_members),
                 "academic_year": academic_year,
                 "tenant_id": str(tenant_id),
                 "status": "success"
@@ -1046,26 +1014,25 @@ class EnrollmentService(BaseService[Enrollment]):
                     COUNT(CASE WHEN e.status = 'completed' THEN 1 END) as completed_enrollments,
                     COUNT(CASE WHEN e.status = 'transferred' THEN 1 END) as transferred_enrollments,
                     COUNT(CASE WHEN e.status = 'withdrawn' THEN 1 END) as withdrawn_enrollments,
-                    COUNT(DISTINCT e.student_id) as unique_students,
+                    COUNT(DISTINCT e.member_id) as unique_students,
                     COUNT(DISTINCT e.class_id) as unique_classes
                 FROM enrollments e
                 JOIN classes c ON e.class_id = c.id
                 {base_where}
             """)
-            
+
             result = await self.db.execute(stats_sql, params)
             stats = result.fetchone()
-            
-            # Grade-wise enrollment distribution
+
+            # Grade-wise enrollment distribution (grade lives on the class, not the member)
             grade_distribution_sql = text(f"""
-                SELECT s.grade_level, COUNT(*) as enrollment_count
+                SELECT c.grade_level, COUNT(*) as enrollment_count
                 FROM enrollments e
-                JOIN students s ON e.student_id = s.id
                 JOIN classes c ON e.class_id = c.id
                 {base_where}
                 AND e.status = 'active'
-                GROUP BY s.grade_level
-                ORDER BY s.grade_level
+                GROUP BY c.grade_level
+                ORDER BY c.grade_level
             """)
             
             grade_result = await self.db.execute(grade_distribution_sql, params)

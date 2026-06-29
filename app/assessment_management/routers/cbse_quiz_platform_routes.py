@@ -8,7 +8,8 @@ import json
 import logging
 
 from app.core.database import get_db
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 
 router = APIRouter(prefix="/cbse-quiz", tags=["CBSE Quiz Platform"])
@@ -45,7 +46,7 @@ async def create_cbse_quiz(
     teacher_id: UUID,
     time_limit: int = 60,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # authoring: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # authoring: staff only
 ):
     """Create CBSE subject quiz"""
     # Bind tenant + owning teacher to the principal; never trust client ids.
@@ -85,7 +86,7 @@ async def add_question_to_quiz(
     quiz_id: UUID,
     request_data: dict,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # authoring: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # authoring: staff only
 ):
     """Add question to CBSE quiz"""
     question_text = request_data.get("question_text")
@@ -326,7 +327,7 @@ async def get_quiz_results(
                q.title, s.first_name, s.last_name
         FROM quiz_attempts qa
         JOIN quizzes q ON qa.quiz_id = q.id
-        JOIN students s ON qa.student_id = s.id
+        JOIN members s ON qa.student_id = s.id
         WHERE qa.id = :attempt_id
     """), {"attempt_id": str(attempt_id)})
     attempt_info = result.fetchone()

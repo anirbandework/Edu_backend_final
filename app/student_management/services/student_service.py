@@ -1,377 +1,400 @@
-# app/services/student_service.py
+# app/student_management/services/student_service.py
+"""StudentService — the admin "Students" page, now backed by the UNIFIED
+`members` table (Member ORM) instead of the legacy `students` table.
+
+A "student" is a Member row carrying a SOFT tag: profile['category'] == 'student'.
+Every read here filters on that tag so staff members are never surfaced as
+students; every write stamps it on create/import.
+
+Field mapping (legacy students column -> members):
+  id            -> members.id (UUID)
+  student_id    -> members.staff_id  (human HRID, e.g. "STU001")
+  first/last/email/phone/date_of_birth/gender/address/status/password_hash
+                -> members columns of the same name
+  roll_number, admission_number, academic_year, grade_level, section, parent_info,
+  health_medical_info, emergency_information, behavioral_disciplinary,
+  extended_academic_info, enrollment_details, financial_info, extracurricular_social,
+  attendance_engagement, additional_metadata
+                -> stored INSIDE members.profile JSON under the SAME keys.
+
+TRANSITIONAL: grade_level / section live in profile here, but the AUTHORITATIVE
+grade/section for a student is their ENROLMENT class (Enrollment.member_id ->
+ClassModel). The bulk grade/section/promote ops below mutate profile only; they do
+NOT move enrolments. get_student_classes (router) reads the real enrolment.
+
+The legacy `students` table and Student ORM are intentionally untouched (still FK'd
+by exams/assessments/chat). This service no longer references them.
+"""
 from typing import List, Optional, Dict, Any
 from uuid import UUID
-import uuid
 from datetime import datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, text
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
+
 from ...services.base_service import BaseService
-from ..models.student import Student
+from ...staff_management.models.member import Member
+from ...auth_rbac.access.service import RBACService
+
+# The soft tag that distinguishes student-members from every other member.
+STUDENT_CATEGORY = "student"
+
+# Keys that map to dedicated Member columns (NOT into profile).
+_COLUMN_KEYS = {
+    "tenant_id", "first_name", "last_name", "email", "phone",
+    "date_of_birth", "gender", "address", "status",
+}
+# Keys that are stored inside members.profile (and re-exposed on responses).
+_PROFILE_KEYS = [
+    "roll_number", "admission_number", "academic_year", "grade_level", "section",
+    "parent_info", "health_medical_info", "emergency_information",
+    "behavioral_disciplinary", "extended_academic_info", "enrollment_details",
+    "financial_info", "extracurricular_social", "attendance_engagement",
+    "additional_metadata",
+]
 
 
-class StudentService(BaseService[Student]):
+def _is_student_clause():
+    """SQLAlchemy predicate: members.profile->>'category' = 'student'.
+    profile is the generic JSON type (not the PG dialect type), so `.as_string()`
+    is used (not `.astext`) — it compiles to the PG ->> text accessor."""
+    return Member.profile["category"].as_string() == STUDENT_CATEGORY
+
+
+def _prof_get(member: Member, key: str, default=None):
+    p = member.profile or {}
+    return p.get(key, default)
+
+
+class StudentService(BaseService[Member]):
+    """CRUD for student-members. The exported name stays `StudentService` and the
+    public method surface is unchanged so the router import and call-sites keep
+    working; only the backing table changed (students -> members)."""
+
     def __init__(self, db: AsyncSession):
-        super().__init__(Student, db)
-    
-    async def get_by_tenant(self, tenant_id: UUID) -> List[Student]:
-        """Get all students for a specific tenant/school"""
-        stmt = select(self.model).where(
-            self.model.tenant_id == tenant_id,
-            self.model.is_deleted == False
+        super().__init__(Member, db)
+
+    # ---------------- role assignment ----------------
+    async def _ensure_student_role_id(self, tenant_id) -> UUID:
+        """Every student-member needs an rbac role. Reuse the tenant's default
+        'staff' role; if none exists, create a default 'Student' staff role."""
+        role_id = await RBACService.get_default_role_id(self.db, tenant_id, "staff")
+        if role_id:
+            return role_id
+        # No default staff role for this tenant yet — create one. is_default=True is
+        # safe here precisely because get_default_role_id returned None (no existing
+        # default to steal), matching the task's None-branch contract.
+        role = await RBACService.create_role(
+            self.db, tenant_id=tenant_id, user_type="staff",
+            role_name="Student", is_default=True,
         )
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-    
-    async def get_by_student_id(self, student_id: str, tenant_id: Optional[UUID] = None) -> Optional[Student]:
-        """Get student by their student_id"""
-        stmt = select(self.model).where(
-            self.model.student_id == student_id,
-            self.model.is_deleted == False
+        return role.id
+
+    # ---------------- helpers ----------------
+    def _student_scope(self, stmt, tenant_id=None):
+        stmt = stmt.where(Member.is_deleted == False, _is_student_clause())  # noqa: E712
+        if tenant_id is not None:
+            stmt = stmt.where(Member.tenant_id == tenant_id)
+        return stmt
+
+    async def get(self, id: Any, tenant_id: Any = None) -> Optional[Member]:
+        """Override BaseService.get to constrain to student-members only."""
+        stmt = self._student_scope(select(Member).where(Member.id == id), tenant_id)
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_by_tenant(self, tenant_id: UUID) -> List[Member]:
+        stmt = self._student_scope(select(Member), tenant_id).order_by(
+            func.coalesce(Member.first_name, "zzz").asc(),
+            func.coalesce(Member.last_name, "zzz").asc(),
         )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def get_by_email(self, email: str) -> Optional[Student]:
-        """Get student by email"""
-        stmt = select(self.model).where(
-            self.model.email == email,
-            self.model.is_deleted == False
+        return (await self.db.execute(stmt)).scalars().all()
+
+    async def get_by_student_id(self, student_id: str, tenant_id: Optional[UUID] = None) -> Optional[Member]:
+        """Look up a student-member by their human student_id (-> staff_id)."""
+        stmt = self._student_scope(
+            select(Member).where(Member.staff_id == student_id), tenant_id
         )
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def get_by_admission_number(self, admission_number: str, tenant_id: Optional[UUID] = None) -> Optional[Student]:
-        """Get student by admission number"""
-        stmt = select(self.model).where(
-            self.model.admission_number == admission_number,
-            self.model.is_deleted == False
+        return (await self.db.execute(stmt)).scalar_one_or_none()
+
+    async def get_students_by_grade(self, grade_level: int, tenant_id: Optional[UUID] = None) -> List[Member]:
+        stmt = self._student_scope(
+            select(Member).where(Member.profile["grade_level"].as_string() == str(grade_level)),
+            tenant_id,
         )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def get_active_students(self, tenant_id: Optional[UUID] = None) -> List[Student]:
-        """Get all active students, optionally filtered by tenant"""
-        stmt = select(self.model).where(
-            self.model.status == "active",
-            self.model.is_deleted == False
+        return (await self.db.execute(stmt)).scalars().all()
+
+    # ---------------- create ----------------
+    async def create(self, obj_in: dict) -> Member:
+        """Create a student-member: maps profile keys into members.profile, stamps
+        profile.category='student', assigns the default staff role, role='staff'."""
+        tenant_id = obj_in.get("tenant_id")
+        student_id = obj_in.get("student_id")
+
+        # student_id (-> staff_id) uniqueness is app-level only and scoped to
+        # student-members of this tenant (staff_id is shared with real staff codes,
+        # so a global unique check would be wrong).
+        if student_id and tenant_id:
+            existing = await self.get_by_student_id(student_id, tenant_id)
+            if existing:
+                raise HTTPException(status_code=400, detail="Same student ID already exists")
+
+        role_id = await self._ensure_student_role_id(tenant_id)
+
+        # Build profile JSON from the profile keys + the soft category tag.
+        profile: Dict[str, Any] = {"category": STUDENT_CATEGORY}
+        for k in _PROFILE_KEYS:
+            if obj_in.get(k) is not None:
+                profile[k] = obj_in.get(k)
+
+        member = Member(
+            tenant_id=tenant_id,
+            rbac_role_id=role_id,
+            staff_id=student_id,
+            # NOT-NULL columns on members — default blanks where the student form
+            # leaves them empty (legacy students allowed NULLs; members do not).
+            first_name=(obj_in.get("first_name") or "").strip(),
+            last_name=(obj_in.get("last_name") or "").strip(),
+            email=(obj_in.get("email") or None),
+            phone=(obj_in.get("phone") or "").strip(),
+            date_of_birth=obj_in.get("date_of_birth"),
+            gender=obj_in.get("gender"),
+            address=obj_in.get("address"),
+            status=obj_in.get("status") or "active",
+            role="staff",
+            profile=profile,
         )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-    
-    async def get_students_by_grade(self, grade_level: int, tenant_id: Optional[UUID] = None) -> List[Student]:
-        """Get students by grade level"""
-        stmt = select(self.model).where(
-            self.model.grade_level == grade_level,
-            self.model.is_deleted == False
-        )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-    
-    async def get_students_by_section(self, section: str, tenant_id: Optional[UUID] = None) -> List[Student]:
-        """Get students by section"""
-        stmt = select(self.model).where(
-            self.model.section == section,
-            self.model.is_deleted == False
-        )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-    
-    async def get_by_phone(self, phone: str, tenant_id: Optional[UUID] = None) -> Optional[Student]:
-        """Get student by phone number"""
-        stmt = select(self.model).where(
-            self.model.phone == phone,
-            self.model.is_deleted == False
-        )
-        
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-            
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def create(self, obj_in: dict) -> Student:
-        """Create new student with validation"""
+        self.db.add(member)
         try:
-            # Check if student_id already exists for the tenant
-            if obj_in.get("student_id") and obj_in.get("tenant_id"):
-                existing = await self.get_by_student_id(obj_in.get("student_id"), obj_in.get("tenant_id"))
-                if existing:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Same student ID already exists"
-                    )
-            
-            return await super().create(obj_in)
-            
-        except HTTPException:
-            raise
-        except IntegrityError as e:
+            await self.db.commit()
+        except IntegrityError:
+            # Only `email` carries a DB unique constraint on members.
             await self.db.rollback()
-            raise HTTPException(status_code=409, detail="Same student ID already exists")
+            raise HTTPException(status_code=409, detail="That email is already in use.")
+        except HTTPException:
+            await self.db.rollback()
+            raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=400, detail=str(e))
-    
+        await self.db.refresh(member)
+        return member
+
+    # ---------------- update ----------------
+    async def update(self, id: Any, obj_in: Dict, tenant_id: Any = None) -> Optional[Member]:
+        """Update a student-member. Column keys hit Member columns; profile keys are
+        merged into members.profile."""
+        member = await self.get(id, tenant_id=tenant_id)
+        if not member:
+            return None
+
+        profile = dict(member.profile or {})
+        for key, value in obj_in.items():
+            if key in _PROFILE_KEYS:
+                profile[key] = value
+            elif key in _COLUMN_KEYS and hasattr(Member, key):
+                setattr(member, key, value)
+        profile["category"] = STUDENT_CATEGORY  # keep the soft tag intact
+        member.profile = profile
+        # Reassign so SQLAlchemy detects the JSON mutation.
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            raise HTTPException(status_code=409, detail="That email is already in use.")
+        await self.db.refresh(member)
+        return member
+
+    async def soft_delete(self, id: Any, tenant_id: Any = None) -> bool:
+        member = await self.get(id, tenant_id=tenant_id)
+        if not member:
+            return False
+        member.is_deleted = True
+        member.status = "inactive"
+        await self.db.commit()
+        return True
+
+    # ---------------- paginated list ----------------
     async def get_students_paginated(
         self,
         page: int = 1,
         size: int = 20,
         tenant_id: Optional[UUID] = None,
         grade_level: Optional[int] = None,
-        section: Optional[str] = None
+        section: Optional[str] = None,
     ) -> dict:
-        """Get paginated students with filters ordered alphabetically by name"""
-        from sqlalchemy import select, func
-        
+        """Paginated student-members, alphabetical, tenant + profile filters."""
         offset = (page - 1) * size
-        
-        # Build query with alphabetical ordering
-        stmt = select(self.model).where(self.model.is_deleted == False)
-        
-        # Add filters
-        if tenant_id:
-            stmt = stmt.where(self.model.tenant_id == tenant_id)
-        if grade_level:
-            stmt = stmt.where(self.model.grade_level == grade_level)
-        if section:
-            stmt = stmt.where(self.model.section == section)
-        
-        # Order alphabetically by first_name, then last_name (handle NULLs)
-        from sqlalchemy import func
-        stmt = stmt.order_by(
-            func.coalesce(self.model.first_name, 'zzz').asc(),
-            func.coalesce(self.model.last_name, 'zzz').asc()
+
+        def _filters(stmt):
+            stmt = self._student_scope(stmt, tenant_id)
+            if grade_level is not None:
+                stmt = stmt.where(Member.profile["grade_level"].as_string() == str(grade_level))
+            if section:
+                stmt = stmt.where(Member.profile["section"].as_string() == section)
+            return stmt
+
+        stmt = _filters(select(Member)).order_by(
+            func.coalesce(Member.first_name, "zzz").asc(),
+            func.coalesce(Member.last_name, "zzz").asc(),
         )
-        
-        # Get total count
-        count_stmt = select(func.count()).select_from(self.model).where(self.model.is_deleted == False)
-        if tenant_id:
-            count_stmt = count_stmt.where(self.model.tenant_id == tenant_id)
-        if grade_level:
-            count_stmt = count_stmt.where(self.model.grade_level == grade_level)
-        if section:
-            count_stmt = count_stmt.where(self.model.section == section)
-        
-        count_result = await self.db.execute(count_stmt)
-        total = count_result.scalar()
-        
-        # Execute main query with pagination
-        stmt = stmt.offset(offset).limit(size)
-        result = await self.db.execute(stmt)
-        items = result.scalars().all()
-        
+        count_stmt = _filters(select(func.count()).select_from(Member))
+
+        total = (await self.db.execute(count_stmt)).scalar()
+        items = (await self.db.execute(stmt.offset(offset).limit(size))).scalars().all()
+
         return {
             "items": items,
             "total": total,
             "page": page,
             "size": size,
-            "total_pages": (total + size - 1) // size,
+            "total_pages": (total + size - 1) // size if total else 0,
             "has_next": page * size < total,
             "has_previous": page > 1,
         }
-    
-    async def update_login_time(self, student_id: UUID) -> Optional[Student]:
-        """Update last login time for student"""
-        student = await self.get(student_id)
-        if student:
-            student.last_login = datetime.utcnow()
-            await self.db.commit()
-            await self.db.refresh(student)
-        return student
-    
-    # BULK OPERATIONS USING RAW SQL FOR HIGH PERFORMANCE
-    
+
+    async def get_paginated(self, page: int = 1, size: int = 20, **filters):
+        """Used by the export endpoint. Honours tenant_id/grade_level/section/status
+        filters, scoped to student-members."""
+        tenant_id = filters.get("tenant_id")
+        grade_level = filters.get("grade_level")
+        section = filters.get("section")
+        status = filters.get("status")
+        offset = (page - 1) * size
+
+        def _apply(stmt):
+            stmt = self._student_scope(stmt, tenant_id)
+            if grade_level is not None:
+                stmt = stmt.where(Member.profile["grade_level"].as_string() == str(grade_level))
+            if section:
+                stmt = stmt.where(Member.profile["section"].as_string() == section)
+            if status:
+                stmt = stmt.where(Member.status == status)
+            return stmt
+
+        stmt = _apply(select(Member))
+        count_stmt = _apply(select(func.count()).select_from(Member))
+        total = (await self.db.execute(count_stmt)).scalar()
+        items = (await self.db.execute(stmt.offset(offset).limit(size))).scalars().all()
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "size": size,
+            "total_pages": (total + size - 1) // size if total else 0,
+            "has_next": page * size < total,
+            "has_previous": page > 1,
+        }
+
+    # ---------------- bulk operations ----------------
+    # These use ORM iteration over student-members (profile is JSON, not JSONB, so
+    # jsonb_set-style raw UPDATEs are avoided in favour of safe dict mutation).
+
     async def bulk_import_students(self, students_data: List[dict], tenant_id: UUID) -> dict:
-        """Bulk import students using raw SQL for maximum performance"""
+        """Bulk import student-members. Dedupes on the human student_id (->staff_id)
+        and on phone, within this tenant's student-members + globally on phone."""
         try:
             if not students_data:
                 raise HTTPException(status_code=400, detail="No student data provided")
-            
-            # Check for existing student IDs and phone numbers in database
-            student_ids = [student.get("student_id") for student in students_data if student.get("student_id")]
-            phones = [student.get("phone") for student in students_data if student.get("phone")]
-            
-            # Get existing student count for this tenant
-            existing_count_sql = text("""
-                SELECT COUNT(*) FROM students 
-                WHERE tenant_id = :tenant_id AND is_deleted = false
-            """)
-            count_result = await self.db.execute(existing_count_sql, {"tenant_id": str(tenant_id)})
-            existing_student_count = count_result.scalar()
-            
-            # Check for existing student IDs
+
+            role_id = await self._ensure_student_role_id(tenant_id)
+
+            # Existing student_ids (->staff_id) among this tenant's student-members.
+            incoming_ids = [s.get("student_id") for s in students_data if s.get("student_id")]
             existing_student_ids = set()
-            if student_ids:
-                existing_student_sql = text("""
-                    SELECT student_id FROM students 
-                    WHERE tenant_id = :tenant_id AND student_id = ANY(:student_ids) AND is_deleted = false
-                """)
-                result = await self.db.execute(existing_student_sql, {"tenant_id": str(tenant_id), "student_ids": student_ids})
-                existing_student_ids = {row[0] for row in result.fetchall()}
-            
-            # Check for existing phone numbers
+            if incoming_ids:
+                rows = await self.db.execute(
+                    self._student_scope(
+                        select(Member.staff_id).where(Member.staff_id.in_(incoming_ids)),
+                        tenant_id,
+                    )
+                )
+                existing_student_ids = {r for (r,) in rows.fetchall()}
+
+            # Existing phones across ALL members (phone is globally indexed/unique-ish).
+            incoming_phones = [s.get("phone") for s in students_data if s.get("phone")]
             existing_phones = set()
-            if phones:
-                existing_phone_sql = text("""
-                    SELECT phone FROM students 
-                    WHERE phone = ANY(:phones) AND is_deleted = false
-                """)
-                result = await self.db.execute(existing_phone_sql, {"phones": phones})
-                existing_phones = {row[0] for row in result.fetchall()}
-            
-            # Validate and prepare bulk insert data
-            now = datetime.utcnow()
-            insert_data = []
-            validation_errors = []
-            duplicate_errors = []
-            phones_in_batch = set()
-            student_ids_in_batch = set()
-            
-            for idx, student_data in enumerate(students_data):
-                try:
-                    # Validate required fields (minimal: only tenant_id and student_id)
-                    required_fields = ["student_id"]
-                    for field in required_fields:
-                        if not student_data.get(field):
-                            validation_errors.append(f"Row {idx + 1}: Missing required field '{field}'")
-                            continue
-                    
-                    if validation_errors:
+            if incoming_phones:
+                rows = await self.db.execute(
+                    select(Member.phone).where(
+                        Member.phone.in_(incoming_phones),
+                        Member.is_deleted == False,  # noqa: E712
+                    )
+                )
+                existing_phones = {r for (r,) in rows.fetchall()}
+
+            validation_errors: List[str] = []
+            duplicate_errors: List[str] = []
+            ids_in_batch: set = set()
+            phones_in_batch: set = set()
+            to_add: List[Member] = []
+
+            for idx, sd in enumerate(students_data):
+                student_id = sd.get("student_id")
+                if not student_id:
+                    validation_errors.append(f"Row {idx + 1}: Missing required field 'student_id'")
+                    continue
+                if student_id in existing_student_ids:
+                    duplicate_errors.append(f"Row {idx + 1}: Student ID '{student_id}' already exists in database")
+                    continue
+                if student_id in ids_in_batch:
+                    duplicate_errors.append(f"Row {idx + 1}: Student ID '{student_id}' is duplicate in this batch")
+                    continue
+                ids_in_batch.add(student_id)
+
+                phone = sd.get("phone")
+                if phone:
+                    if phone in existing_phones:
+                        duplicate_errors.append(f"Row {idx + 1}: Phone number '{phone}' already exists in database")
                         continue
-                    
-                    # Check student ID uniqueness (required and must be unique)
-                    student_id = student_data.get("student_id")
-                    if student_id in existing_student_ids:
-                        duplicate_errors.append(f"Row {idx + 1}: Student ID '{student_id}' already exists in database")
+                    if phone in phones_in_batch:
+                        duplicate_errors.append(f"Row {idx + 1}: Phone number '{phone}' is duplicate in this batch")
                         continue
-                    if student_id in student_ids_in_batch:
-                        duplicate_errors.append(f"Row {idx + 1}: Student ID '{student_id}' is duplicate in this batch")
-                        continue
-                    student_ids_in_batch.add(student_id)
-                    
-                    # Check phone number uniqueness (optional but must be unique if provided)
-                    phone = student_data.get("phone")
-                    if phone:
-                        if phone in existing_phones:
-                            duplicate_errors.append(f"Row {idx + 1}: Phone number '{phone}' already exists in database")
-                            continue
-                        if phone in phones_in_batch:
-                            duplicate_errors.append(f"Row {idx + 1}: Phone number '{phone}' is duplicate in this batch")
-                            continue
-                        phones_in_batch.add(phone)
-                    
-                    # Parse date_of_birth if provided
-                    date_of_birth = None
-                    if student_data.get("date_of_birth"):
-                        try:
-                            date_str = student_data["date_of_birth"]
-                            if date_str.endswith('Z'):
-                                date_str = date_str[:-1] + '+00:00'
+                    phones_in_batch.add(phone)
+
+                # Parse date_of_birth (iso string) if present.
+                date_of_birth = None
+                if sd.get("date_of_birth"):
+                    try:
+                        date_str = sd["date_of_birth"]
+                        if isinstance(date_str, str):
+                            if date_str.endswith("Z"):
+                                date_str = date_str[:-1] + "+00:00"
                             date_of_birth = datetime.fromisoformat(date_str).replace(tzinfo=None)
-                        except Exception as e:
-                            validation_errors.append(f"Row {idx + 1}: Invalid date format for date_of_birth: {str(e)}")
-                            continue
-                    
-                    # Prepare student record with JSON serialization
-                    import json
-                    student_record = {
-                        "id": str(uuid.uuid4()),
-                        "tenant_id": str(tenant_id),
-                        "student_id": student_data["student_id"],
-                        "first_name": student_data.get("first_name"),
-                        "last_name": student_data.get("last_name"),
-                        "email": student_data.get("email"),
-                        "phone": student_data.get("phone"),
-                        "date_of_birth": date_of_birth,
-                        "address": student_data.get("address"),
-                        "role": "student",
-                        "status": student_data.get("status", "active"),
-                        "admission_number": student_data.get("admission_number"),
-                        "roll_number": student_data.get("roll_number"),
-                        "grade_level": student_data.get("grade_level"),
-                        "section": student_data.get("section"),
-                        "academic_year": student_data.get("academic_year"),
-                        "parent_info": json.dumps(student_data.get("parent_info")) if student_data.get("parent_info") else None,
-                        "health_medical_info": json.dumps(student_data.get("health_medical_info")) if student_data.get("health_medical_info") else None,
-                        "emergency_information": json.dumps(student_data.get("emergency_information")) if student_data.get("emergency_information") else None,
-                        "behavioral_disciplinary": json.dumps(student_data.get("behavioral_disciplinary")) if student_data.get("behavioral_disciplinary") else None,
-                        "extended_academic_info": json.dumps(student_data.get("extended_academic_info")) if student_data.get("extended_academic_info") else None,
-                        "enrollment_details": json.dumps(student_data.get("enrollment_details")) if student_data.get("enrollment_details") else None,
-                        "financial_info": json.dumps(student_data.get("financial_info")) if student_data.get("financial_info") else None,
-                        "extracurricular_social": json.dumps(student_data.get("extracurricular_social")) if student_data.get("extracurricular_social") else None,
-                        "attendance_engagement": json.dumps(student_data.get("attendance_engagement")) if student_data.get("attendance_engagement") else None,
-                        "additional_metadata": json.dumps(student_data.get("additional_metadata")) if student_data.get("additional_metadata") else None,
-                        "created_at": now,
-                        "updated_at": now,
-                        "is_deleted": False
-                    }
-                    insert_data.append(student_record)
-                    
-                except Exception as e:
-                    validation_errors.append(f"Row {idx + 1}: {str(e)}")
-            
-            # Don't throw exception for duplicates, handle like teacher service
-            
-            # Efficient bulk insert using COPY or VALUES for large datasets
+                        elif isinstance(date_str, datetime):
+                            date_of_birth = date_str.replace(tzinfo=None)
+                    except Exception as e:
+                        validation_errors.append(f"Row {idx + 1}: Invalid date format for date_of_birth: {str(e)}")
+                        continue
+
+                profile: Dict[str, Any] = {"category": STUDENT_CATEGORY}
+                for k in _PROFILE_KEYS:
+                    if sd.get(k) is not None:
+                        profile[k] = sd.get(k)
+
+                to_add.append(Member(
+                    tenant_id=tenant_id,
+                    rbac_role_id=role_id,
+                    staff_id=student_id,
+                    first_name=(sd.get("first_name") or "").strip(),
+                    last_name=(sd.get("last_name") or "").strip(),
+                    email=(sd.get("email") or None),
+                    phone=(phone or "").strip(),
+                    date_of_birth=date_of_birth,
+                    gender=sd.get("gender"),
+                    address=sd.get("address"),
+                    status=sd.get("status", "active"),
+                    role="staff",
+                    profile=profile,
+                ))
+
             successful_imports = 0
-            if insert_data:
-                # Use batch insert with VALUES for better performance
-                batch_size = 50  # Process in batches to avoid memory issues
-                
-                for i in range(0, len(insert_data), batch_size):
-                    batch = insert_data[i:i + batch_size]
-                    
-                    # Create VALUES clause for batch
-                    values_list = []
-                    params = {}
-                    
-                    for idx, record in enumerate(batch):
-                        param_prefix = f"r{i + idx}_"
-                        values_list.append(f"(:{param_prefix}id, :{param_prefix}tenant_id, :{param_prefix}student_id, :{param_prefix}first_name, :{param_prefix}last_name, :{param_prefix}email, :{param_prefix}phone, :{param_prefix}date_of_birth, :{param_prefix}address, :{param_prefix}role, :{param_prefix}status, :{param_prefix}admission_number, :{param_prefix}roll_number, :{param_prefix}grade_level, :{param_prefix}section, :{param_prefix}academic_year, :{param_prefix}parent_info, :{param_prefix}health_medical_info, :{param_prefix}emergency_information, :{param_prefix}behavioral_disciplinary, :{param_prefix}extended_academic_info, :{param_prefix}enrollment_details, :{param_prefix}financial_info, :{param_prefix}extracurricular_social, :{param_prefix}attendance_engagement, :{param_prefix}additional_metadata, :{param_prefix}created_at, :{param_prefix}updated_at, :{param_prefix}is_deleted)")
-                        
-                        # Add parameters with prefix
-                        for key, value in record.items():
-                            params[f"{param_prefix}{key}"] = value
-                    
-                    batch_sql = text(f"""
-                        INSERT INTO students (
-                            id, tenant_id, student_id, first_name, last_name, 
-                            email, phone, date_of_birth, address, role, status,
-                            admission_number, roll_number, grade_level, section, academic_year,
-                            parent_info, health_medical_info, emergency_information,
-                            behavioral_disciplinary, extended_academic_info, enrollment_details,
-                            financial_info, extracurricular_social, attendance_engagement,
-                            additional_metadata, created_at, updated_at, is_deleted
-                        ) VALUES {', '.join(values_list)}
-                    """)
-                    
-                    await self.db.execute(batch_sql, params)
-                    successful_imports += len(batch)
-                
+            if to_add:
+                self.db.add_all(to_add)
                 await self.db.commit()
-            
+                successful_imports = len(to_add)
+
             return {
                 "total_records_processed": len(students_data),
                 "successful_imports": successful_imports,
@@ -380,329 +403,249 @@ class StudentService(BaseService[Student]):
                 "validation_errors": validation_errors if validation_errors else None,
                 "duplicate_errors": duplicate_errors if duplicate_errors else None,
                 "tenant_id": str(tenant_id),
-                "status": "success" if successful_imports > 0 else "failed"
+                "status": "success" if successful_imports > 0 else "failed",
             }
-            
+
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk import failed: {str(e)}")
-    
+
+    async def _fetch_students_by_uuids(self, ids: List[str], tenant_id: UUID) -> List[Member]:
+        clean = []
+        for i in ids:
+            try:
+                clean.append(str(UUID(str(i))))
+            except (ValueError, TypeError):
+                continue
+        if not clean:
+            return []
+        stmt = self._student_scope(select(Member).where(Member.id.in_(clean)), tenant_id)
+        return (await self.db.execute(stmt)).scalars().all()
+
     async def bulk_update_grades(self, grade_updates: List[dict], tenant_id: UUID) -> dict:
-        """Bulk update student grade levels using raw SQL"""
+        """TRANSITIONAL: updates profile.grade_level only. The authoritative grade is
+        the student's enrolment class — this does NOT move enrolments."""
         try:
             if not grade_updates:
                 raise HTTPException(status_code=400, detail="No grade update data provided")
-            
-            # Update students one by one using UUID
-            updated_count = 0
-            
+
+            updated = 0
             for update in grade_updates:
-                student_uuid = update.get("student_uuid") or update.get("student_id")  # Support both formats
+                # Matches on the members.id UUID (field name may be student_id or student_uuid).
+                sid = update.get("student_uuid") or update.get("student_id")
                 new_grade = update.get("new_grade")
-                
-                if not student_uuid or new_grade is None:
+                if not sid or new_grade is None:
                     continue
-                
-                update_sql = text("""
-                    UPDATE students
-                    SET grade_level = :new_grade,
-                        updated_at = :updated_at
-                    WHERE tenant_id = :tenant_id
-                    AND id = :student_uuid
-                    AND is_deleted = false
-                """)
-                
-                result = await self.db.execute(
-                    update_sql,
-                    {
-                        "new_grade": new_grade,
-                        "updated_at": datetime.utcnow(),
-                        "tenant_id": tenant_id,
-                        "student_uuid": student_uuid
-                    }
-                )
-                
-                if result.rowcount > 0:
-                    updated_count += 1
-            
+                member = await self.get(sid, tenant_id=tenant_id)
+                if not member:
+                    continue
+                profile = dict(member.profile or {})
+                profile["grade_level"] = new_grade
+                profile["category"] = STUDENT_CATEGORY
+                member.profile = profile
+                updated += 1
+
             await self.db.commit()
-            
             return {
-                "updated_students": updated_count,
+                "updated_students": updated,
                 "total_requests": len(grade_updates),
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success",
             }
-            
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk grade update failed: {str(e)}")
-    
+
     async def bulk_promote_students(self, current_grade: int, tenant_id: UUID, academic_year: str) -> dict:
-        """Promote all students from current grade to next grade using raw SQL"""
+        """TRANSITIONAL: bumps profile.grade_level + sets profile.academic_year for
+        active student-members at `current_grade`. Does NOT move enrolments."""
         try:
-            # Get count of students to be promoted
-            count_sql = text("""
-                SELECT COUNT(*) as student_count
-                FROM students
-                WHERE tenant_id = :tenant_id
-                AND grade_level = :current_grade
-                AND status = 'active'
-                AND is_deleted = false
-            """)
-            
-            result = await self.db.execute(
-                count_sql,
-                {"tenant_id": tenant_id, "current_grade": current_grade}
+            stmt = self._student_scope(
+                select(Member).where(
+                    Member.profile["grade_level"].as_string() == str(current_grade),
+                    Member.status == "active",
+                ),
+                tenant_id,
             )
-            student_count = result.scalar()
-            
-            if student_count == 0:
+            members = (await self.db.execute(stmt)).scalars().all()
+
+            if not members:
                 return {
                     "promoted_students": 0,
-                    "message": f"No students found in grade {current_grade}",
-                    "status": "success"
-                }
-            
-            # Promote students
-            promote_sql = text("""
-                UPDATE students 
-                SET grade_level = grade_level + 1,
-                    academic_year = :academic_year,
-                    updated_at = :updated_at
-                WHERE tenant_id = :tenant_id
-                AND grade_level = :current_grade
-                AND status = 'active'
-                AND is_deleted = false
-            """)
-            
-            await self.db.execute(
-                promote_sql,
-                {
+                    "from_grade": current_grade,
+                    "to_grade": current_grade + 1,
                     "academic_year": academic_year,
-                    "updated_at": datetime.utcnow(),
-                    "tenant_id": tenant_id,
-                    "current_grade": current_grade
+                    "message": f"No students found in grade {current_grade}",
+                    "tenant_id": str(tenant_id),
+                    "status": "success",
                 }
-            )
-            
+
+            for member in members:
+                profile = dict(member.profile or {})
+                try:
+                    cur = int(profile.get("grade_level"))
+                except (TypeError, ValueError):
+                    cur = current_grade
+                profile["grade_level"] = cur + 1
+                profile["academic_year"] = academic_year
+                profile["category"] = STUDENT_CATEGORY
+                member.profile = profile
+
             await self.db.commit()
-            
             return {
-                "promoted_students": student_count,
+                "promoted_students": len(members),
                 "from_grade": current_grade,
                 "to_grade": current_grade + 1,
                 "academic_year": academic_year,
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success",
             }
-            
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk promotion failed: {str(e)}")
-    
+
     async def bulk_update_status(self, student_ids: List[str], new_status: str, tenant_id: UUID) -> dict:
-        """Bulk update student status using raw SQL"""
+        """Updates members.status for the given member UUIDs (student-members only)."""
         try:
             if not student_ids:
                 raise HTTPException(status_code=400, detail="No student IDs provided")
-            
+
             valid_statuses = ["active", "inactive", "graduated", "transferred", "suspended", "expelled"]
             if new_status not in valid_statuses:
                 raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid status. Must be one of: {valid_statuses}"
+                    status_code=400,
+                    detail=f"Invalid status. Must be one of: {valid_statuses}",
                 )
-            
-            update_sql = text("""
-                UPDATE students
-                SET status = :new_status,
-                    updated_at = :updated_at
-                WHERE tenant_id = :tenant_id
-                AND id = ANY(:student_ids)
-                AND is_deleted = false
-            """)
-            
-            result = await self.db.execute(
-                update_sql,
-                {
-                    "new_status": new_status,
-                    "updated_at": datetime.utcnow(),
-                    "tenant_id": tenant_id,
-                    "student_ids": student_ids
-                }
-            )
-            
+
+            members = await self._fetch_students_by_uuids(student_ids, tenant_id)
+            for member in members:
+                member.status = new_status
             await self.db.commit()
-            
+
             return {
-                "message": f"Status update completed. {result.rowcount} students updated to '{new_status}'",
-                "updated_students": result.rowcount,
+                "message": f"Status update completed. {len(members)} students updated to '{new_status}'",
+                "updated_students": len(members),
                 "new_status": new_status,
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success",
             }
-            
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk status update failed: {str(e)}")
-    
+
     async def bulk_update_sections(self, section_updates: List[dict], tenant_id: UUID) -> dict:
-        """Bulk update student sections using raw SQL"""
+        """TRANSITIONAL: updates profile.section only (authoritative section is the
+        enrolment class). Does NOT move enrolments."""
         try:
             if not section_updates:
                 raise HTTPException(status_code=400, detail="No section update data provided")
-            
-            updated_count = 0
-            
+
+            updated = 0
             for update in section_updates:
-                student_uuid = update.get("student_uuid") or update.get("student_id")
+                sid = update.get("student_uuid") or update.get("student_id")
                 new_section = update.get("new_section")
-                
-                if not student_uuid:
+                if not sid:
                     continue
-                
-                update_sql = text("""
-                    UPDATE students
-                    SET section = :new_section,
-                        updated_at = :updated_at
-                    WHERE tenant_id = :tenant_id
-                    AND id = :student_uuid
-                    AND is_deleted = false
-                """)
-                
-                result = await self.db.execute(
-                    update_sql,
-                    {
-                        "new_section": new_section,
-                        "updated_at": datetime.utcnow(),
-                        "tenant_id": tenant_id,
-                        "student_uuid": student_uuid
-                    }
-                )
-                
-                if result.rowcount > 0:
-                    updated_count += 1
-            
+                member = await self.get(sid, tenant_id=tenant_id)
+                if not member:
+                    continue
+                profile = dict(member.profile or {})
+                profile["section"] = new_section
+                profile["category"] = STUDENT_CATEGORY
+                member.profile = profile
+                updated += 1
+
             await self.db.commit()
-            
             return {
-                "updated_students": updated_count,
+                "updated_students": updated,
                 "total_requests": len(section_updates),
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success",
             }
-            
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk section update failed: {str(e)}")
-    
+
     async def bulk_soft_delete(self, student_ids: List[str], tenant_id: UUID) -> dict:
-        """Bulk soft delete students using raw SQL"""
+        """Bulk soft delete student-members (is_deleted=true, status='inactive')."""
         try:
             if not student_ids:
                 raise HTTPException(status_code=400, detail="No student IDs provided")
-            
-            delete_sql = text("""
-                UPDATE students
-                SET is_deleted = true,
-                    status = 'inactive',
-                    updated_at = :updated_at
-                WHERE tenant_id = :tenant_id
-                AND id = ANY(:student_ids)
-                AND is_deleted = false
-            """)
-            
-            result = await self.db.execute(
-                delete_sql,
-                {
-                    "updated_at": datetime.utcnow(),
-                    "tenant_id": tenant_id,
-                    "student_ids": student_ids
-                }
-            )
-            
+
+            members = await self._fetch_students_by_uuids(student_ids, tenant_id)
+            for member in members:
+                member.is_deleted = True
+                member.status = "inactive"
             await self.db.commit()
-            
+
             return {
-                "deleted_students": result.rowcount,
+                "deleted_students": len(members),
                 "tenant_id": str(tenant_id),
-                "status": "success"
+                "status": "success",
             }
-            
         except HTTPException:
             await self.db.rollback()
             raise
         except Exception as e:
             await self.db.rollback()
             raise HTTPException(status_code=500, detail=f"Bulk delete failed: {str(e)}")
-    
+
     async def get_student_statistics(self, tenant_id: UUID) -> dict:
-        """Get comprehensive student statistics using raw SQL for performance"""
+        """Statistics over this tenant's student-members. status counts from the
+        members.status column; grade aggregates from profile->>'grade_level'."""
         try:
-            stats_sql = text("""
-                SELECT 
-                    COUNT(*) as total_students,
-                    COUNT(CASE WHEN status = 'active' THEN 1 END) as active_students,
-                    COUNT(CASE WHEN status = 'inactive' THEN 1 END) as inactive_students,
-                    COUNT(CASE WHEN status = 'graduated' THEN 1 END) as graduated_students,
-                    COUNT(CASE WHEN status = 'transferred' THEN 1 END) as transferred_students,
-                    COUNT(CASE WHEN status = 'suspended' THEN 1 END) as suspended_students,
-                    COUNT(CASE WHEN status = 'expelled' THEN 1 END) as expelled_students,
-                    AVG(grade_level) as average_grade,
-                    MIN(grade_level) as lowest_grade,
-                    MAX(grade_level) as highest_grade
-                FROM students
-                WHERE tenant_id = :tenant_id
-                AND is_deleted = false
-            """)
-            
-            result = await self.db.execute(stats_sql, {"tenant_id": tenant_id})
-            stats = result.fetchone()
-            
-            # Get grade-wise distribution
-            grade_distribution_sql = text("""
-                SELECT grade_level, COUNT(*) as student_count
-                FROM students
-                WHERE tenant_id = :tenant_id
-                AND is_deleted = false
-                AND status = 'active'
-                GROUP BY grade_level
-                ORDER BY grade_level
-            """)
-            
-            grade_result = await self.db.execute(grade_distribution_sql, {"tenant_id": tenant_id})
-            grade_distribution = {row[0]: row[1] for row in grade_result.fetchall()}
-            
-            return {
-                "total_students": stats[0] or 0,
-                "active_students": stats[1] or 0,
-                "inactive_students": stats[2] or 0,
-                "graduated_students": stats[3] or 0,
-                "transferred_students": stats[4] or 0,
-                "suspended_students": stats[5] or 0,
-                "expelled_students": stats[6] or 0,
-                "average_grade": float(stats[7]) if stats[7] else 0.0,
-                "lowest_grade": stats[8] or 0,
-                "highest_grade": stats[9] or 0,
-                "grade_distribution": grade_distribution,
-                "tenant_id": str(tenant_id)
+            members = await self.get_by_tenant(tenant_id)
+
+            counts = {
+                "active": 0, "inactive": 0, "graduated": 0,
+                "transferred": 0, "suspended": 0, "expelled": 0,
             }
-            
+            grades: List[int] = []
+            grade_distribution: Dict[int, int] = {}
+
+            for m in members:
+                if m.status in counts:
+                    counts[m.status] += 1
+                g = _prof_get(m, "grade_level")
+                gi = None
+                if g is not None:
+                    try:
+                        gi = int(g)
+                    except (TypeError, ValueError):
+                        gi = None
+                if gi is not None:
+                    grades.append(gi)
+                    if m.status == "active":
+                        grade_distribution[gi] = grade_distribution.get(gi, 0) + 1
+
+            return {
+                "total_students": len(members),
+                "active_students": counts["active"],
+                "inactive_students": counts["inactive"],
+                "graduated_students": counts["graduated"],
+                "transferred_students": counts["transferred"],
+                "suspended_students": counts["suspended"],
+                "expelled_students": counts["expelled"],
+                "average_grade": round(sum(grades) / len(grades), 2) if grades else 0.0,
+                "lowest_grade": min(grades) if grades else 0,
+                "highest_grade": max(grades) if grades else 0,
+                "grade_distribution": dict(sorted(grade_distribution.items())),
+                "tenant_id": str(tenant_id),
+            }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get statistics: {str(e)}")

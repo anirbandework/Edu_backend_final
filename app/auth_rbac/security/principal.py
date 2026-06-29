@@ -6,8 +6,6 @@ import uuid
 
 ROLE_SUPER_ADMIN = "super_admin"
 ROLE_AUTHORITY = "school_authority"
-ROLE_TEACHER = "teacher"
-ROLE_STUDENT = "student"
 # Unified dynamic-role staff (faculty / principal / HOD / office / ...). Their
 # real permissions come from the rbac_role assigned to them, NOT a coarse bucket.
 ROLE_STAFF = "staff"
@@ -18,7 +16,7 @@ ROLE_STAFF = "staff"
 # rbac_role's grants), never the blanket is_staff property. Including it here
 # would let a zero-permission staff user pass every inline `principal.is_staff`
 # authorization check (notifications, quizzes, timetable, analytics, ...).
-STAFF_ROLES = {ROLE_SUPER_ADMIN, ROLE_AUTHORITY, ROLE_TEACHER}
+STAFF_ROLES = {ROLE_SUPER_ADMIN, ROLE_AUTHORITY}
 
 
 @dataclass(frozen=True)
@@ -40,7 +38,7 @@ class Principal:
 
     @property
     def is_dynamic_staff(self) -> bool:
-        """A user in the unified staff_users table (role/pages defined entirely
+        """A user in the unified members table (role/pages defined entirely
         by their assigned rbac_role)."""
         return self.role == ROLE_STAFF
 

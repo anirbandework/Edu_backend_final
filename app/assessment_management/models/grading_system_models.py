@@ -30,7 +30,7 @@ class Assessment(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False, index=True)  # Existing subjects table
     class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)  # Existing classes table
-    teacher_id = Column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=False, index=True)   # Existing teachers table
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)   # was teachers.id; now a members.id (the owning member)
     
     # Assessment Information
     assessment_title = Column(String(200), nullable=False)
@@ -61,7 +61,7 @@ class AssessmentSubmission(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     assessment_id = Column(UUID(as_uuid=True), ForeignKey("assessments.id"), nullable=False, index=True)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)  # Existing students table
+    student_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was students.id; now a members.id (dynamic model)
     
     # Submission Information
     submission_date = Column(DateTime)
@@ -75,7 +75,7 @@ class AssessmentSubmission(Base):
     
     # Feedback
     teacher_feedback = Column(Text)
-    graded_by = Column(UUID(as_uuid=True), ForeignKey("teachers.id"))
+    graded_by = Column(UUID(as_uuid=True), ForeignKey("members.id"))  # was teachers.id; now a members.id
     graded_date = Column(DateTime)
     
     # Status
@@ -89,7 +89,7 @@ class StudentGrade(Base):
     
     # Foreign Keys - Use existing tables
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)  # Existing students table
+    student_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was students.id; now a members.id (dynamic model)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False, index=True)  # Existing subjects table
     class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)  # Existing classes table
     
@@ -107,7 +107,7 @@ class StudentGrade(Base):
     
     # Tracking
     last_updated = Column(DateTime)
-    calculated_by = Column(UUID(as_uuid=True), ForeignKey("teachers.id"))
+    calculated_by = Column(UUID(as_uuid=True), ForeignKey("members.id"))  # was teachers.id; now a members.id
     
     # Comments
     teacher_comments = Column(Text)
@@ -143,7 +143,7 @@ class ReportCard(Base):
     
     # Foreign Keys - Use existing tables
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)  # Existing students table
+    student_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was students.id; now a members.id (dynamic model)
     class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)  # Existing classes table
     
     # Report Information

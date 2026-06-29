@@ -7,7 +7,7 @@ from datetime import datetime
 
 from ...core.database import get_db
 from ...auth_rbac.security.deps import get_current_principal, require_super_admin, require_staff, assert_same_tenant
-from ...auth_rbac.access.deps import require_staff_or_module
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 from ...exam_management.services.exam_service import ExamService
 from ...exam_management.schemas.exam_schemas import (
@@ -23,7 +23,7 @@ async def create_exam(
     exam_data: ExamCreate,
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('exams'))  # staff (teacher/authority/super-admin) only
 ):
     """Create new exam with flexible configuration"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -74,7 +74,7 @@ async def update_exam(
     exam_data: ExamUpdate,
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('exams'))  # staff (teacher/authority/super-admin) only
 ):
     """Update exam"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -91,7 +91,7 @@ async def create_student_mark(
     class_id: UUID = Query(...),
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('exams'))  # staff (teacher/authority/super-admin) only
 ):
     """Create or update student mark"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -111,7 +111,7 @@ async def bulk_create_marks(
     background_tasks: BackgroundTasks,
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('exams'))  # staff (teacher/authority/super-admin) only
 ):
     """Bulk create/update student marks"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -215,10 +215,10 @@ async def get_exam_marks(
     base_query = """
         SELECT 
             sem.id,
-            sem.student_id,
+            sem.member_id,
             s.first_name,
             s.last_name,
-            s.roll_number,
+            (s.profile ->> 'roll_number') AS roll_number,
             sem.marks_data,
             sem.total_marks,
             sem.obtained_marks,
@@ -228,7 +228,7 @@ async def get_exam_marks(
             sem.marked_at,
             sem.remarks
         FROM student_exam_marks sem
-        JOIN students s ON sem.student_id = s.id
+        JOIN members s ON sem.member_id = s.id
         WHERE sem.exam_id = :exam_id
     """
 
@@ -247,7 +247,7 @@ async def get_exam_marks(
         base_query += " AND sem.class_id = :class_id"
         params["class_id"] = str(class_id)
     
-    base_query += " ORDER BY s.roll_number, s.first_name LIMIT :limit OFFSET :skip"
+    base_query += " ORDER BY (s.profile ->> 'roll_number'), s.first_name LIMIT :limit OFFSET :skip"
     params.update({"limit": limit, "skip": skip})
     
     result = await db.execute(text(base_query), params)
@@ -255,7 +255,7 @@ async def get_exam_marks(
     
     return [{
         "id": str(mark.id),
-        "student_id": str(mark.student_id),
+        "student_id": str(mark.member_id),  # API key kept; value is a members.id
         "first_name": mark.first_name,
         "last_name": mark.last_name,
         "roll_number": mark.roll_number,
@@ -274,7 +274,7 @@ async def delete_exam(
     exam_id: UUID,
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))
+    principal: Principal = Depends(require_authority_or_module('exams'))
 ):
     """Soft delete exam"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -294,7 +294,7 @@ async def publish_exam_results(
     exam_id: UUID,
     tenant_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('exams'))
+    principal: Principal = Depends(require_authority_or_module('exams'))
 ):
     """Publish exam results"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id

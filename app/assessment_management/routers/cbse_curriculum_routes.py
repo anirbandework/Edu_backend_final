@@ -5,7 +5,8 @@ from uuid import UUID
 
 from ...core.database import get_db
 from ...assessment_management.services.cbse_curriculum_service import CBSEContentService
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 
 router = APIRouter(prefix="/cbse", tags=["CBSE Content"])
@@ -22,7 +23,7 @@ async def generate_book_chunks(
     chapter_content: str,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # AI content authoring: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # AI content authoring: staff only
 ):
     """Generate AI-powered book chunks for a subject"""
     service = CBSEContentService(db)
@@ -42,7 +43,7 @@ async def generate_sample_paper(
     subject: str,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # AI content authoring: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # AI content authoring: staff only
 ):
     """Generate CBSE pattern sample paper"""
     service = CBSEContentService(db)
@@ -84,7 +85,7 @@ async def bulk_generate_content(
     tenant_id: UUID,
     subjects: List[str],
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # AI content authoring: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # AI content authoring: staff only
 ):
     """Generate sample papers for multiple subjects"""
     service = CBSEContentService(db)

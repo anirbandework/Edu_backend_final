@@ -14,12 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.config import settings
 from ..security.password import verify_password
 from ..security.principal import (
-    ROLE_SUPER_ADMIN, ROLE_AUTHORITY, ROLE_TEACHER, ROLE_STUDENT, ROLE_STAFF,
+    ROLE_SUPER_ADMIN, ROLE_AUTHORITY, ROLE_STAFF,
 )
 from ...school_authority_management.models.school_authority import SchoolAuthority
-from ...teacher_management.models.teacher import Teacher
-from ...student_management.models.student import Student
-from ...staff_management.models.staff_user import StaffUser
+from ...staff_management.models.member import Member
 
 
 @dataclass
@@ -29,12 +27,14 @@ class Identity:
     tenant_id: Optional[str]
 
 
-# (model, role) in priority order
+# (model, role) in priority order. The system has THREE user types: the platform
+# super-admin (above), the school authority (admin), and the unified dynamic
+# `staff` user — every non-admin (Teacher/Professor/Student/Parent/...) is a staff
+# user whose role+pages come from their assigned rbac_role. Legacy teacher/student
+# identity tables are no longer login identities.
 _IDENTITY_TABLES = [
     (SchoolAuthority, ROLE_AUTHORITY),
-    (StaffUser, ROLE_STAFF),
-    (Teacher, ROLE_TEACHER),
-    (Student, ROLE_STUDENT),
+    (Member, ROLE_STAFF),
 ]
 
 

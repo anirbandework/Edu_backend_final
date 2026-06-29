@@ -55,8 +55,8 @@ class AILearningService:
         attempts = result.scalars().all()
         
         # Get student name
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -460,8 +460,8 @@ Format as JSON:
                 recommendations = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -484,8 +484,8 @@ Format as JSON:
                       if perf.get("total", 0) > 0 and (perf.get("correct", 0) / perf["total"]) < 0.7]
         
         # Get student name
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -612,8 +612,8 @@ Format as JSON:
                 analysis = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -635,8 +635,8 @@ Format as JSON:
         weak_topics = list(gap_analysis.keys())
         
         # Get student name
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -752,8 +752,8 @@ Format as JSON:
                 plan = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -774,8 +774,8 @@ Format as JSON:
         
         # Fallback plan
         # Get student name
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -885,8 +885,8 @@ Format as JSON:
                 prediction = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -909,8 +909,8 @@ Format as JSON:
         avg_score = sum(recent_scores) / len(recent_scores)
         
         # Get student name
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"

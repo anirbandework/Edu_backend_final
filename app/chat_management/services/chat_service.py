@@ -64,13 +64,13 @@ class ChatService(BaseService[ChatRoom]):
     async def get_available_teachers(self, student_id: UUID, tenant_id: UUID) -> List[Dict]:
         """Get all available teachers for a student to chat with"""
         try:
-            from ...teacher_management.models.teacher import Teacher
+            from ...staff_management.models.member import Member  # was Teacher (dynamic model)
             from .websocket_manager import websocket_manager
             
-            stmt = select(Teacher).where(
+            stmt = select(Member).where(
                 and_(
-                    Teacher.tenant_id == tenant_id,
-                    Teacher.is_deleted == False
+                    Member.tenant_id == tenant_id,
+                    Member.is_deleted == False
                 )
             )
             result = await self.db.execute(stmt)
@@ -92,13 +92,13 @@ class ChatService(BaseService[ChatRoom]):
     async def get_available_students(self, teacher_id: UUID, tenant_id: UUID) -> List[Dict]:
         """Get all available students for a teacher to chat with"""
         try:
-            from ...student_management.models.student import Student
+            from ...staff_management.models.member import Member  # was Student (dynamic model)
             from .websocket_manager import websocket_manager
             
-            stmt = select(Student).where(
+            stmt = select(Member).where(
                 and_(
-                    Student.tenant_id == tenant_id,
-                    Student.is_deleted == False
+                    Member.tenant_id == tenant_id,
+                    Member.is_deleted == False
                 )
             )
             result = await self.db.execute(stmt)
@@ -109,7 +109,7 @@ class ChatService(BaseService[ChatRoom]):
                     "id": str(student.id),
                     "name": f"{student.first_name or ''} {student.last_name or ''}".strip(),
                     "email": student.email or "",
-                    "student_id": getattr(student, 'student_id', None) or "",
+                    "student_id": getattr(student, 'staff_id', None) or "",  # HRID
                     "class_name": getattr(student, 'class_name', None),
                     "is_online": websocket_manager.is_user_online(student.id)
                 }
@@ -121,11 +121,11 @@ class ChatService(BaseService[ChatRoom]):
     async def get_student_chats(self, student_id: UUID, tenant_id: UUID) -> List[Dict]:
         """Get all chat rooms for a student with last message and unread count"""
         try:
-            from ...teacher_management.models.teacher import Teacher
+            from ...staff_management.models.member import Member  # was Teacher (dynamic model)
             
             # Get chat rooms with teacher info
-            stmt = select(ChatRoom, Teacher).join(
-                Teacher, ChatRoom.teacher_id == Teacher.id
+            stmt = select(ChatRoom, Member).join(
+                Member, ChatRoom.teacher_id == Member.id
             ).where(
                 and_(
                     ChatRoom.student_id == student_id,
@@ -202,11 +202,11 @@ class ChatService(BaseService[ChatRoom]):
     async def get_teacher_chats(self, teacher_id: UUID, tenant_id: UUID) -> List[Dict]:
         """Get all chat rooms for a teacher with last message and unread count"""
         try:
-            from ...student_management.models.student import Student
+            from ...staff_management.models.member import Member  # was Student (dynamic model)
             
             # Get chat rooms with student info
-            stmt = select(ChatRoom, Student).join(
-                Student, ChatRoom.student_id == Student.id
+            stmt = select(ChatRoom, Member).join(
+                Member, ChatRoom.student_id == Member.id
             ).where(
                 and_(
                     ChatRoom.teacher_id == teacher_id,
@@ -253,7 +253,7 @@ class ChatService(BaseService[ChatRoom]):
                             "id": str(student.id),
                             "name": f"{student.first_name or ''} {student.last_name or ''}".strip(),
                             "email": student.email or "",
-                            "student_id": getattr(student, 'student_id', None) or "",
+                            "student_id": getattr(student, 'staff_id', None) or "",  # HRID
                             "is_online": websocket_manager.is_user_online(student.id)
                         },
                         "unread_count": unread_count

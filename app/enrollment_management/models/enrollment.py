@@ -17,14 +17,17 @@ class Enrollment(Base):  # Changed from BaseModel to Base
         nullable=False,
         index=True,
     )
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)
+    # A "student" is just a MEMBER enrolled in a class (dynamic-role model — there
+    # is no separate students table identity any more). grade/section come from the
+    # class, not the member.
+    member_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)
     class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)
-    
+
     # Enrollment Details
     enrollment_date = Column(DateTime, nullable=False)
     academic_year = Column(String(10), nullable=False)
     status = Column(String(20), default="active", nullable=False)
-    
+
     # Relationships
-    student = relationship("Student", back_populates="enrollments")
+    member = relationship("Member")
     class_ref = relationship("ClassModel", back_populates="enrollments")

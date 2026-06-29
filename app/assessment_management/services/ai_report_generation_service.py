@@ -155,8 +155,8 @@ Format as JSON:
                 report_data = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -176,8 +176,8 @@ Format as JSON:
             logger.error(f"Report generation parsing error: {e}")
         
         # Get student name for fallback
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -444,8 +444,8 @@ Format as JSON:
                 report_data = json.loads(json_str)
                 
                 # Get student name
-                from ...student_management.models.student import Student
-                student_query = select(Student).where(Student.id == request.student_id)
+                from ...staff_management.models.member import Member  # student-subject id is a members.id now
+                student_query = select(Member).where(Member.id == request.student_id)
                 student_result = await db.execute(student_query)
                 student = student_result.scalar_one_or_none()
                 student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -464,8 +464,8 @@ Format as JSON:
             logger.error(f"Parent report parsing error: {e}")
         
         # Get student name for fallback
-        from ...student_management.models.student import Student
-        student_query = select(Student).where(Student.id == request.student_id)
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
+        student_query = select(Member).where(Member.id == request.student_id)
         student_result = await db.execute(student_query)
         student = student_result.scalar_one_or_none()
         student_name = f"{student.first_name} {student.last_name}" if student else "Unknown Student"
@@ -493,10 +493,10 @@ Format as JSON:
         all_student_data = []
         
         # Get student names first
-        from ...student_management.models.student import Student
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
         student_names = {}
         for student_id in request.student_ids:
-            student_query = select(Student).where(Student.id == student_id)
+            student_query = select(Member).where(Member.id == student_id)
             student_result = await db.execute(student_query)
             student = student_result.scalar_one_or_none()
             if student:

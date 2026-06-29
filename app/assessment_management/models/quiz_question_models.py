@@ -132,8 +132,8 @@ class Quiz(Base):
     
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     topic_id = Column(UUID(as_uuid=True), ForeignKey("topics.id"), nullable=False, index=True)
-    teacher_id = Column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=False, index=True)
-    
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was teachers.id; now the owning members.id
+
     title = Column(String(200), nullable=False)
     description = Column(Text)
     instructions = Column(Text)
@@ -152,7 +152,7 @@ class Quiz(Base):
     # Relationships
     tenant = relationship("Tenant")
     topic = relationship("Topic", back_populates="quizzes")
-    teacher = relationship("Teacher")
+    teacher = relationship("Member")  # attr kept 'teacher'; the owning member (was Teacher)
     quiz_questions = relationship("QuizQuestion", back_populates="quiz")
     quiz_attempts = relationship("QuizAttempt", back_populates="quiz")
 
@@ -174,8 +174,8 @@ class QuizAttempt(Base):
     
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     quiz_id = Column(UUID(as_uuid=True), ForeignKey("quizzes.id"), nullable=False, index=True)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)
-    
+    student_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was students.id; now the attempter's members.id
+
     attempt_number = Column(Integer, default=1)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime)
@@ -191,7 +191,7 @@ class QuizAttempt(Base):
     # Relationships
     tenant = relationship("Tenant")
     quiz = relationship("Quiz", back_populates="quiz_attempts")
-    student = relationship("Student")
+    student = relationship("Member")  # attr kept 'student'; the attempter member (was Student)
     answers = relationship("QuizAnswer", back_populates="attempt")
 
 class QuizAnswer(Base):

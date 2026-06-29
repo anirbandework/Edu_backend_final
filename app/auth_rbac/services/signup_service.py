@@ -14,23 +14,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.invitation import Invitation
 from ..security.password import hash_password
-from ..security.principal import ROLE_AUTHORITY, ROLE_TEACHER, ROLE_STUDENT
+from ..security.principal import ROLE_AUTHORITY, ROLE_STAFF
 from . import invitation_service
-from ...student_management.models.student import Student
-from ...teacher_management.models.teacher import Teacher
 from ...school_authority_management.models.school_authority import SchoolAuthority
+from ...staff_management.models.member import Member
 
+# Only the school authority (admin) is invite-created here (by the super-admin).
+# Every other user is a dynamic `staff` user, created via /api/staff with an
+# assigned rbac_role — not through this invite/signup path.
 _MODEL_BY_ROLE = {
     ROLE_AUTHORITY: SchoolAuthority,
-    ROLE_TEACHER: Teacher,
-    ROLE_STUDENT: Student,
+    ROLE_STAFF: Member,  # member self-onboarding (Students page invite)
 }
 _HRID_FIELD = {
     ROLE_AUTHORITY: "authority_id",
-    ROLE_TEACHER: "teacher_id",
-    ROLE_STUDENT: "student_id",
+    ROLE_STAFF: "staff_id",
 }
-_HRID_PREFIX = {ROLE_AUTHORITY: "AUTH", ROLE_TEACHER: "TCH", ROLE_STUDENT: "STU"}
+_HRID_PREFIX = {ROLE_AUTHORITY: "AUTH", ROLE_STAFF: "STF"}
 
 
 def _gen_hrid(role: str) -> str:
@@ -66,6 +66,8 @@ async def create_invited_user(
         # Email is optional now (login is phone+password); only phone is required.
         if phone is None:
             fields["phone"] = ""  # NOT NULL on authority; real phone set at signup
+    if role == ROLE_STAFF and phone is None:
+        fields["phone"] = ""  # NOT NULL on members; real phone set at signup
     if extra:
         fields.update(extra)
     obj = model(**fields)
@@ -75,23 +77,35 @@ async def create_invited_user(
     return obj
 
 
+async def find_pending_account_by_phone(db: AsyncSession, phone: str):
+    """Find a created-but-not-yet-activated user (password_hash is NULL) by phone, across
+    the identity tables. Powers first-login WITHOUT any invite/token: the admin creates the
+    user, then the user sets their OWN password by phone. Returns (user, role) or (None, None)."""
+    phone = (phone or "").strip()
+    if not phone:
+        return None, None
+    for model, role in ((SchoolAuthority, ROLE_AUTHORITY), (Member, ROLE_STAFF)):
+        stmt = select(model).where(model.phone == phone, model.password_hash.is_(None))
+        if hasattr(model, "is_deleted"):
+            stmt = stmt.where(model.is_deleted == False)  # noqa: E712
+        user = (await db.execute(stmt)).scalars().first()
+        if user:
+            return user, role
+    return None, None
+
+
 async def complete_signup(
-    db: AsyncSession, inv: Invitation, *, phone: str, password: str,
+    db: AsyncSession, *, phone: str, password: str,
     first_name: Optional[str] = None, last_name: Optional[str] = None,
 ):
-    """Activate the invited user: set verified phone + password, status=active."""
-    model = _MODEL_BY_ROLE.get(inv.role)
-    if not model or not inv.target_user_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed invitation.")
-
-    user = (await db.execute(select(model).where(model.id == inv.target_user_id))).scalar_one_or_none()
+    """First login: find the created (password-less) user by phone, set their chosen
+    password, and activate them. Purely phone-based — no invite token."""
+    user, role = await find_pending_account_by_phone(db, phone)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invited account no longer exists.")
-    if getattr(user, "status", None) == "active" and getattr(user, "password_hash", None):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This account is already active.")
-
-    # phone must be unique among active users (allow the invite's own pre-set phone)
-    await invitation_service.assert_phone_available(db, phone, exclude_user_id=str(user.id))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account awaiting setup for this phone. Ask your admin to add you "
+                   "first, or use 'Forgot password' if you've already set one.")
 
     user.phone = phone.strip()
     user.password_hash = hash_password(password)
@@ -101,17 +115,13 @@ async def complete_signup(
     if last_name:
         user.last_name = last_name
 
-    # Assign the tenant's default RBAC role for this user_type (inv.role is already the
-    # rbac user_type: 'teacher' | 'student' | 'school_authority'). No-op if the tenant
-    # has no default configured, or the user already carries a role.
+    # Give them the tenant's default role for their type if they don't carry one yet.
     if getattr(user, "rbac_role_id", None) is None:
         from ..access.service import RBACService
-        default_role_id = await RBACService.get_default_role_id(db, user.tenant_id, inv.role)
+        default_role_id = await RBACService.get_default_role_id(db, user.tenant_id, role)
         if default_role_id:
             user.rbac_role_id = default_role_id
 
     await db.commit()
     await db.refresh(user)
-
-    await invitation_service.mark_accepted(db, inv, str(user.id))
     return user

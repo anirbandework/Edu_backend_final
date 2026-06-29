@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import catalog
-from .catalog import MODULES, PREMIUM_MODULE_KEYS, get_module, modules_for, enabled_field
+from .catalog import MODULES, PREMIUM_MODULE_KEYS, get_module, modules_for, enabled_field, AUTHORITY
 from .models import (
     RbacRole, TenantModulePermission, TenantTabPermission,
     RoleModulePermission, RoleTabPermission,
@@ -168,6 +168,24 @@ class RBACService:
         return bool(tp.authority_enabled or tp.teacher_enabled or tp.student_enabled)
 
     @staticmethod
+    async def tenant_admin_has_page(db, tenant_id, module_key) -> bool:
+        """ADMIN ceiling: may this org's ADMIN use/see this page (admin_enabled)?
+        Required pages are always on; no row => default True (backward compatible),
+        so this only ever denies a page the super-admin EXPLICITLY revoked."""
+        m = get_module(module_key)
+        if m and m.get("required"):
+            return True
+        if not tenant_id:
+            return True
+        tp = (await db.execute(
+            select(TenantModulePermission).where(
+                TenantModulePermission.tenant_id == tenant_id,
+                TenantModulePermission.module_key == module_key,
+            )
+        )).scalar_one_or_none()
+        return bool(tp.admin_enabled) if tp is not None else True
+
+    @staticmethod
     async def _org_ceiling_map(db, tenant_id) -> dict:
         """{module_key: org_granted_bool} for a tenant, from one query (default
         ON for modules with no row, unless premium)."""
@@ -268,7 +286,7 @@ class RBACService:
         # Unassign users pointing at this role (they fall back to the deny-list
         # defaults), then hard-delete so its permission rows cascade away and the
         # (tenant,type,key) name can be reused. Avoids stale/zombie permissions.
-        for tbl in ("school_authorities", "teachers", "students", "staff_users"):
+        for tbl in ("school_authorities", "teachers", "students", "members"):
             await db.execute(text(f"UPDATE {tbl} SET rbac_role_id = NULL WHERE rbac_role_id = :rid"),
                              {"rid": str(role.id)})
         await db.delete(role)
@@ -434,6 +452,66 @@ class RBACService:
             await RBACService.set_tenant_module(
                 db, tenant_id, m["module_key"], authority=enabled, teacher=enabled, student=enabled, by=by)
 
+    # ------------- admin page grant (super-admin → admin's OWN sidebar) ----------
+    @staticmethod
+    async def _admin_ceiling_map(db, tenant_id) -> dict:
+        """{module_key: admin_can_see_it} for a tenant. Default ON (no row)."""
+        rows = []
+        if tenant_id:
+            rows = (await db.execute(
+                select(TenantModulePermission).where(TenantModulePermission.tenant_id == tenant_id)
+            )).scalars().all()
+        explicit = {r.module_key: bool(r.admin_enabled) for r in rows}
+        return {m["module_key"]: explicit.get(m["module_key"], True) for m in MODULES}
+
+    @staticmethod
+    async def get_admin_permissions(db, tenant_id) -> list[dict]:
+        """The ADMIN's own sidebar = admin-audience pages the super-admin left ON
+        for this org (admin_enabled). Required pages (Profile) are always on. The
+        shape matches a my-permissions module entry so the client can gate on it."""
+        ceiling = await RBACService._admin_ceiling_map(db, tenant_id)
+        out = []
+        for m in modules_for(AUTHORITY):
+            enabled = True if m.get("required") else ceiling.get(m["module_key"], True)
+            out.append({
+                "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
+                "path": m["path"], "enabled": enabled, "required": bool(m.get("required")), "locked": False,
+                "tabs": [{"tab_key": t[0], "tab_label": t[1]} for t in m["tabs"]],
+                "tab_permissions": {t[0]: True for t in m["tabs"]}, "locked_tabs": {},
+            })
+        return out
+
+    @staticmethod
+    async def get_admin_pages(db, tenant_id) -> list[dict]:
+        """Per-page ADMIN grant for the super-admin's 'Admin pages' editor — every
+        admin-audience page (incl. admin-only tools like Roles & Access / Staff),
+        with enabled = admin_enabled. Required pages render locked-on."""
+        ceiling = await RBACService._admin_ceiling_map(db, tenant_id)
+        return [{
+            "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
+            "path": m["path"], "section": m.get("section"), "audience_group": m.get("audience_group"),
+            "required": bool(m.get("required")),
+            "enabled": True if m.get("required") else ceiling.get(m["module_key"], True),
+        } for m in modules_for(AUTHORITY)]
+
+    @staticmethod
+    async def set_admin_page(db, tenant_id, module_key, enabled: bool, by=None):
+        """Show/hide ONE page in the ADMIN's own sidebar. Required pages are no-ops
+        (always on). Does not touch the distributable audience columns."""
+        m = get_module(module_key)
+        if not m:
+            raise ValueError("Unknown page")
+        if m.get("required"):
+            return
+        await RBACService.set_tenant_module(db, tenant_id, module_key, admin=enabled, by=by)
+
+    @staticmethod
+    async def set_all_admin_pages(db, tenant_id, enabled: bool, by=None):
+        for m in modules_for(AUTHORITY):
+            if m.get("required"):
+                continue
+            await RBACService.set_tenant_module(db, tenant_id, m["module_key"], admin=enabled, by=by)
+
     @staticmethod
     async def set_role_modules(db, role, module_keys: list[str], by=None):
         """Replace a role's granted modules with exactly `module_keys` (enabled).
@@ -561,7 +639,7 @@ class RBACService:
         return out
 
     @staticmethod
-    async def set_tenant_module(db, tenant_id, module_key, *, authority=None, teacher=None, student=None, by=None):
+    async def set_tenant_module(db, tenant_id, module_key, *, authority=None, teacher=None, student=None, admin=None, by=None):
         row = (await db.execute(
             select(TenantModulePermission).where(
                 TenantModulePermission.tenant_id == tenant_id,
@@ -573,6 +651,7 @@ class RBACService:
             row = TenantModulePermission(
                 tenant_id=tenant_id, module_key=module_key,
                 authority_enabled=default, teacher_enabled=default, student_enabled=default,
+                admin_enabled=True,
                 configured_by=by,
             )
             db.add(row)
@@ -582,6 +661,8 @@ class RBACService:
             row.teacher_enabled = teacher
         if student is not None:
             row.student_enabled = student
+        if admin is not None:
+            row.admin_enabled = admin
         if by:
             row.configured_by = by
         await db.commit()

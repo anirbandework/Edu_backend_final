@@ -46,12 +46,13 @@ _AUDIENCE_GROUP = {
 }
 
 
-# Pages an admin may NOT distribute to a dynamic 'staff' role because they either
-# (a) are admin-only management tools, or (b) are tied to a teacher/student identity
-# (their endpoints would 403 for a staff user). They still exist for the admin's
-# constant sidebar / canonical teacher+student roles.
+# Pages an admin may NOT distribute to a dynamic 'staff' role because they are
+# admin-only management tools. (The old teacher/student-coupled exclusions are gone —
+# quizzes/assignments/grades are now on member_id and gate with require_authority_or_module,
+# so a dynamic 'staff' role like "Teacher" CAN be granted them.)
 _ADMIN_ONLY = {"rbac_management"}                                  # admin's own tools
-_NOT_STAFF_GRANTABLE = {"my_classes", "quizzes", "assignments", "grades", "chat"}  # teacher/student-coupled
+# my_classes/chat stay non-grantable for now (their FE screens/paths need post-teardown cleanup).
+_NOT_STAFF_GRANTABLE = {"my_classes", "chat"}
 
 
 def _m(key, name, icon, path, audience, premium=False, tabs=None, section=SEC_CORE, required=False):

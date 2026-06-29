@@ -32,9 +32,15 @@ class TenantModulePermission(Base):
 
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     module_key = Column(String(60), nullable=False)
+    # The audience columns below are the DISTRIBUTABLE org ceiling — which pages
+    # the admin may hand out to teacher/student/staff roles ("what they paid for").
     authority_enabled = Column(Boolean, default=True, nullable=False)
     teacher_enabled = Column(Boolean, default=True, nullable=False)
     student_enabled = Column(Boolean, default=True, nullable=False)
+    # admin_enabled is a SEPARATE ceiling: which pages the ADMIN (school authority)
+    # sees in their OWN sidebar/toolset. Independent of the distributable columns.
+    # Default ON so existing orgs keep today's "admin sees everything" behaviour.
+    admin_enabled = Column(Boolean, default=True, nullable=False)
     configured_by = Column(String(120), nullable=True)
 
     __table_args__ = (

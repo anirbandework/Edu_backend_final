@@ -8,7 +8,8 @@ from uuid import UUID
 from ...core.database import get_db
 from ...assessment_management.services.quiz_management_service import QuizService
 from ...core.rate_limiter import rate_limiter
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 from ...assessment_management.schemas.quiz_validation_schemas import (
     TopicCreate, TopicResponse, QuestionCreate, QuestionResponse,
@@ -51,7 +52,7 @@ async def create_topic(
     topic_data: TopicCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Create a new topic for quizzes."""
     return await quiz_service.create_topic(db, topic_data, _eff_tenant(principal, tenant_id))
@@ -85,7 +86,7 @@ async def create_question(
     question_data: QuestionCreate,
     db: AsyncSession = Depends(get_db),
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Create a new question for a topic."""
     return await quiz_service.create_question(db, question_data, _eff_tenant(principal, tenant_id))
@@ -96,7 +97,7 @@ async def get_questions_by_topic(
     topic_id: UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),  # full question bank incl. answers
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # full question bank incl. answers
 ):
     """Get all questions for a specific topic."""
     return await quiz_service.get_questions_by_topic(db, _eff_tenant(principal, tenant_id), topic_id)
@@ -109,7 +110,7 @@ async def create_quiz(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Create a new quiz."""
     return await quiz_service.create_quiz(db, quiz_data, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -205,7 +206,7 @@ async def get_teacher_quizzes(
     teacher_id: UUID,
     db: AsyncSession = Depends(get_db),
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get all quizzes created by a teacher."""
     return await quiz_service.get_teacher_quizzes(db, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -217,7 +218,7 @@ async def get_quiz_results(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),  # cohort results: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # cohort results: staff only
 ):
     """Get all student results for a quiz (teacher view)."""
     results = await quiz_service.get_quiz_results(db, quiz_id, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -232,7 +233,7 @@ async def delete_quiz(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Delete a quiz (soft delete)."""
     success = await quiz_service.delete_quiz(db, quiz_id, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -259,7 +260,7 @@ async def update_quiz_status(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Update quiz active status."""
     success = await quiz_service.update_quiz_status(db, quiz_id, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id), status_data.is_active)
@@ -274,7 +275,7 @@ async def create_quiz_with_questions(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Create a quiz with inline questions (no need for pre-existing topics/questions)."""
     return await quiz_service.create_quiz_with_questions(db, quiz_data, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -285,7 +286,7 @@ async def get_pending_grading(
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get short answer questions pending manual grading."""
     try:
@@ -302,7 +303,7 @@ async def grade_short_answer(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),  # grading: staff only (no self-grading)
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # grading: staff only (no self-grading)
 ):
     """Grade a short answer question."""
     success = await quiz_service.grade_short_answer(db, answer_id, grade_data.points_awarded, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -316,7 +317,7 @@ async def get_attempts_ready_for_publishing(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get quiz attempts that are fully graded and ready for result publishing."""
     return await quiz_service.get_attempts_ready_for_publishing(db, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))
@@ -328,7 +329,7 @@ async def publish_quiz_results(
     db: AsyncSession = Depends(get_db),
     teacher_id: UUID = None,
     tenant_id: UUID = None,
-    principal: Principal = Depends(require_staff),  # publishing grades: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # publishing grades: staff only
 ):
     """Publish results for completed quiz attempts after all grading is done."""
     success = await quiz_service.publish_quiz_results(db, publish_data.attempt_ids, _eff_owner(principal, teacher_id), _eff_tenant(principal, tenant_id))

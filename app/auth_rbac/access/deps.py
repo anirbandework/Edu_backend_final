@@ -15,7 +15,7 @@ _IDENTITY_TABLE = {
     "school_authority": "school_authorities",
     "teacher": "teachers",
     "student": "students",
-    "staff": "staff_users",
+    "staff": "members",
 }
 
 
@@ -47,17 +47,38 @@ async def principal_has_module(db: AsyncSession, principal: Principal, module_ke
     )
 
 
+async def authority_admin_allowed(db: AsyncSession, principal: Principal, module_keys) -> bool:
+    """For a school_authority (admin) caller: True iff their ADMIN ceiling
+    (admin_enabled) grants at least one of `module_keys` for their tenant. Required
+    pages bypass; no keys => allowed (not a page-specific route). Default-ON, so
+    this only ever denies a page the super-admin EXPLICITLY revoked for this org."""
+    if not module_keys:
+        return True
+    for k in module_keys:
+        if await RBACService.tenant_admin_has_page(db, principal.tenant_uuid, k):
+            return True
+    return False
+
+
 def require_authority_or_module(*module_keys: str):
     """ADDITIVE gate. Passes for the school admin / super-admin exactly as
     `require_authority` did, PLUS a dynamic-staff user whose role grants any of
-    `module_keys`. Non-staff behaviour is unchanged — teachers/students are still
-    denied unless they were allowed before."""
+    `module_keys`. The admin is additionally clamped by their 'Admin pages' ceiling
+    (admin_enabled) — a super-admin can turn a page off for an org's admin. Non-staff
+    (teacher/student) behaviour is unchanged — still denied here."""
     async def _dep(
         principal: Principal = Depends(get_current_principal),
         db: AsyncSession = Depends(get_db),
     ) -> Principal:
-        if principal.is_super_admin or principal.is_authority:
+        if principal.is_super_admin:
             return principal
+        if principal.is_authority:
+            if await authority_admin_allowed(db, principal, module_keys):
+                return principal
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This page is turned off for your account by the platform admin.",
+            )
         for k in module_keys:
             if await principal_has_module(db, principal, k):
                 return principal
@@ -71,13 +92,20 @@ def require_authority_or_module(*module_keys: str):
 def require_staff_or_module(*module_keys: str):
     """ADDITIVE gate. Passes for admin / teacher / super-admin exactly as
     `require_staff` did, PLUS a dynamic-staff user whose role grants any of
-    `module_keys`."""
+    `module_keys`. The admin is additionally clamped by their 'Admin pages' ceiling."""
     async def _dep(
         principal: Principal = Depends(get_current_principal),
         db: AsyncSession = Depends(get_db),
     ) -> Principal:
-        if principal.is_super_admin or principal.role in ("school_authority", "teacher"):
+        if principal.is_super_admin or principal.role == "teacher":
             return principal
+        if principal.role == "school_authority":
+            if await authority_admin_allowed(db, principal, module_keys):
+                return principal
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This page is turned off for your account by the platform admin.",
+            )
         for k in module_keys:
             if await principal_has_module(db, principal, k):
                 return principal

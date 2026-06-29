@@ -8,8 +8,7 @@ from pydantic import BaseModel
 from ...core.database import get_db
 from ...class_management.models.class_model import ClassModel
 from ...enrollment_management.models.enrollment import Enrollment
-from ...student_management.models.student import Student
-from ...teacher_management.models.teacher import Teacher
+from ...staff_management.models.member import Member
 from ...class_management.services.class_service import ClassService
 from ...enrollment_management.services.enrollment_service import EnrollmentService
 from ...auth_rbac.security.deps import get_current_principal, require_super_admin, require_authority, assert_same_tenant
@@ -68,11 +67,11 @@ class BulkDeleteRequest(BaseModel):
     class_ids: List[UUID]
 
 class AddStudentsToClass(BaseModel):
-    student_ids: List[UUID]
+    member_ids: List[UUID]
     academic_year: str
 
 class AssignTeachersToClass(BaseModel):
-    teacher_ids: List[UUID]
+    member_ids: List[UUID]
     subject_name: str
 
 router = APIRouter(prefix="/api/v1/school_authority/classes", tags=["School Authority - Class Management"])
@@ -521,39 +520,34 @@ async def get_class_students(
     if not class_obj:
         raise HTTPException(status_code=404, detail="Class not found")
     
-    # Get students enrolled in this class
-    students_stmt = (
-        select(Student, Enrollment)
-        .join(Enrollment, Student.id == Enrollment.student_id)
+    # Get members enrolled in this class
+    members_stmt = (
+        select(Member, Enrollment)
+        .join(Enrollment, Member.id == Enrollment.member_id)
         .where(
             Enrollment.class_id == class_id,
-            Enrollment.status == "active",
-            Student.is_deleted == False
+            Enrollment.status == "active"
         )
-        .order_by(Student.first_name, Student.last_name)
+        .order_by(Member.first_name, Member.last_name)
     )
-    
-    result = await db.execute(students_stmt)
-    student_enrollments = result.all()
-    
+
+    result = await db.execute(members_stmt)
+    member_enrollments = result.all()
+
     students_data = [
         {
-            "id": str(student.id),
-            "student_id": student.student_id,
-            "first_name": student.first_name,
-            "last_name": student.last_name,
-            "full_name": f"{student.first_name} {student.last_name}",
-            "email": student.email,
-            "phone": student.phone,
-            "admission_number": student.admission_number,
-            "roll_number": student.roll_number,
-            "grade_level": student.grade_level,
-            "section": student.section,
-            "status": student.status,
+            "member_id": str(member.id),
+            "member_name": f"{member.first_name or ''} {member.last_name or ''}".strip(),
+            "member_hrid": member.staff_id,
+            "first_name": member.first_name,
+            "last_name": member.last_name,
+            "status": enrollment.status,
+            "email": member.email,
+            "phone": member.phone,
             "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
             "academic_year": enrollment.academic_year
         }
-        for student, enrollment in student_enrollments
+        for member, enrollment in member_enrollments
     ]
     
     return {
@@ -576,7 +570,8 @@ async def add_students_to_class(
     class_id: UUID,
     request: AddStudentsToClass,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_authority_or_module('classes'))  # writes: authority/super-admin only
+    # Adding a member to a class IS an enrolment write — allow either page to gate it.
+    principal: Principal = Depends(require_authority_or_module('classes', 'enrollment'))  # writes: authority/super-admin/staff-with-page
 ):
     """Add multiple students to a class"""
     enrollment_service = EnrollmentService(db)
@@ -591,17 +586,17 @@ async def add_students_to_class(
             raise HTTPException(status_code=404, detail="Class not found")
         result = await enrollment_service.bulk_enroll_students(
             class_id=class_id,
-            student_ids=request.student_ids,
+            member_ids=request.member_ids,
             academic_year=request.academic_year
         )
-        
+
         return {
-            "message": f"Successfully added {result['successful_enrollments']} students to class",
+            "message": f"Successfully added {result['successful_enrollments']} members to class",
             "class_id": str(class_id),
             "successful_enrollments": result["successful_enrollments"],
             "failed_enrollments": result["failed_enrollments"],
-            "successful_students": result["successful"],
-            "failed_students": result["failed"],
+            "successful_members": result["successful"],
+            "failed_members": result["failed"],
             "class_capacity_after": result["class_capacity_after"]
         }
         
@@ -658,25 +653,24 @@ async def assign_teachers_to_class(
         # Get current assignments (make a copy to avoid reference issues)
         current_assignments = list(class_obj.assigned_teachers) if class_obj.assigned_teachers else []
 
-        # Add new teacher assignments
-        for teacher_id in request.teacher_ids:
-            # Verify teacher exists within the same tenant as the class
-            teacher_stmt = select(Teacher).where(
-                Teacher.id == teacher_id,
-                Teacher.is_deleted == False,
-                Teacher.tenant_id == class_obj.tenant_id
+        # Add new member (teacher) assignments
+        for member_id in request.member_ids:
+            # Verify member exists within the same tenant as the class
+            member_stmt = select(Member).where(
+                Member.id == member_id,
+                Member.tenant_id == class_obj.tenant_id
             )
-            teacher_result = await db.execute(teacher_stmt)
-            teacher = teacher_result.scalar_one_or_none()
-            
-            if teacher:
-                # Check if this teacher-subject combination already exists
-                existing = next((a for a in current_assignments if a.get("teacher_id") == str(teacher_id) and a.get("subject_name") == request.subject_name), None)
+            member_result = await db.execute(member_stmt)
+            member = member_result.scalar_one_or_none()
+
+            if member:
+                # Check if this member-subject combination already exists
+                existing = next((a for a in current_assignments if a.get("member_id") == str(member_id) and a.get("subject_name") == request.subject_name), None)
                 if not existing:
-                    # Add new teacher-subject assignment
+                    # Add new member-subject assignment
                     current_assignments.append({
-                        "teacher_id": str(teacher_id),
-                        "teacher_name": f"{teacher.first_name} {teacher.last_name}",
+                        "member_id": str(member_id),
+                        "member_name": f"{member.first_name or ''} {member.last_name or ''}".strip(),
                         "subject_name": request.subject_name
                     })
         
@@ -686,7 +680,7 @@ async def assign_teachers_to_class(
         await db.refresh(class_obj)
         
         return {
-            "message": f"Successfully assigned teachers to class",
+            "message": f"Successfully assigned members to class",
             "class_id": str(class_id),
             "assigned_teachers": current_assignments
         }
@@ -734,33 +728,31 @@ async def get_available_teachers(
     db: AsyncSession = Depends(get_db),
     principal: Principal = Depends(get_current_principal)
 ):
-    """Get all available teachers for assignment"""
+    """Get all available members for assignment as teachers"""
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
 
-    # Get active teachers for the tenant
-    teachers_stmt = select(Teacher).where(
-        Teacher.tenant_id == effective_tenant,
-        Teacher.status == "active",
-        Teacher.is_deleted == False
-    ).order_by(Teacher.first_name, Teacher.last_name)
-    
-    result = await db.execute(teachers_stmt)
-    teachers = result.scalars().all()
-    
+    # Get active members for the tenant
+    members_stmt = select(Member).where(
+        Member.tenant_id == effective_tenant,
+        Member.status == "active"
+    ).order_by(Member.first_name, Member.last_name)
+
+    result = await db.execute(members_stmt)
+    members = result.scalars().all()
+
     teachers_data = [
         {
-            "id": str(teacher.id),
-            "teacher_id": teacher.teacher_id,
-            "first_name": teacher.first_name,
-            "last_name": teacher.last_name,
-            "full_name": f"{teacher.first_name or ''} {teacher.last_name or ''}".strip(),
-            "email": teacher.email,
-            "phone": teacher.phone,
-            "position": teacher.position,
-            "qualification": teacher.qualification,
-            "experience_years": teacher.experience_years
+            "member_id": str(member.id),
+            "member_hrid": member.staff_id,
+            "first_name": member.first_name,
+            "last_name": member.last_name,
+            "member_name": f"{member.first_name or ''} {member.last_name or ''}".strip(),
+            "email": member.email,
+            "phone": member.phone,
+            "position": member.position,
+            "experience_years": member.experience_years
         }
-        for teacher in teachers
+        for member in members
     ]
     
     return {
@@ -787,45 +779,39 @@ async def get_available_students_for_class(
     if not class_obj:
         raise HTTPException(status_code=404, detail="Class not found")
     
-    # Get students with same grade level OR no grade level (null)
-    # AND not already enrolled in any active class for current academic year
-    students_stmt = (
-        select(Student)
+    # Get members not already enrolled in any active class for current academic year
+    members_stmt = (
+        select(Member)
         .outerjoin(
             Enrollment,
-            (Student.id == Enrollment.student_id) &
+            (Member.id == Enrollment.member_id) &
             (Enrollment.academic_year == class_obj.academic_year) &
             (Enrollment.status == "active") &
             (Enrollment.is_deleted == False)
         )
         .where(
-            Student.tenant_id == class_obj.tenant_id,
-            Student.is_deleted == False,
-            Student.status == "active",
-            (Student.grade_level == class_obj.grade_level) | (Student.grade_level.is_(None)) | (Student.grade_level == 0),
+            Member.tenant_id == class_obj.tenant_id,
+            Member.status == "active",
             Enrollment.id.is_(None)  # Not enrolled in any active class
         )
-        .order_by(Student.first_name, Student.last_name)
+        .order_by(Member.first_name, Member.last_name)
     )
-    
-    result = await db.execute(students_stmt)
-    students = result.scalars().all()
-    
+
+    result = await db.execute(members_stmt)
+    members = result.scalars().all()
+
     students_data = [
         {
-            "id": str(student.id),
-            "student_id": student.student_id,
-            "first_name": student.first_name,
-            "last_name": student.last_name,
-            "full_name": f"{student.first_name or ''} {student.last_name or ''}".strip(),
-            "email": student.email,
-            "phone": student.phone,
-            "grade_level": student.grade_level,
-            "section": student.section,
-            "admission_number": student.admission_number,
-            "roll_number": student.roll_number
+            "member_id": str(member.id),
+            "member_hrid": member.staff_id,
+            "first_name": member.first_name,
+            "last_name": member.last_name,
+            "member_name": f"{member.first_name or ''} {member.last_name or ''}".strip(),
+            "email": member.email,
+            "phone": member.phone,
+            "position": member.position
         }
-        for student in students
+        for member in members
     ]
     
     return {

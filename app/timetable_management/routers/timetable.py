@@ -646,7 +646,7 @@ async def get_teachers_list(
             # Get only teachers assigned to this specific class
             sql = text("""
                 SELECT t.id, t.first_name, t.last_name
-                FROM teachers t
+                FROM members t
                 JOIN classes c ON c.tenant_id = t.tenant_id
                 WHERE t.tenant_id = :tenant_id 
                 AND t.is_deleted = false
@@ -664,7 +664,7 @@ async def get_teachers_list(
             # Get all teachers
             sql = text("""
                 SELECT id, first_name, last_name
-                FROM teachers 
+                FROM members 
                 WHERE tenant_id = :tenant_id AND is_deleted = false
                 ORDER BY first_name, last_name
             """)

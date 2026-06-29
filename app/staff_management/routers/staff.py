@@ -1,6 +1,6 @@
 """Staff & Users API — the unified, dynamic-role user directory for a school.
 
-Create/list/manage staff_users. Creation is delegation-gated: an admin may add
+Create/list/manage members. Creation is delegation-gated: an admin may add
 any role in their school; a staff member may add only the roles their own role
 was granted permission to create.
 """
@@ -25,7 +25,6 @@ class StaffCreate(BaseModel):
     first_name: str
     last_name: str
     phone: str
-    password: str
     rbac_role_id: str
     email: Optional[str] = None
     position: Optional[str] = None
@@ -84,7 +83,7 @@ async def _validate_role(db, principal, role_id: str):
     role = await RBACService.get_role(db, role_id)
     if not role or str(role.tenant_id) != str(principal.tenant_id):
         raise HTTPException(status_code=400, detail="Invalid role for this school.")
-    # A staff_users account may only carry a dynamic 'staff' role — never a
+    # A members account may only carry a dynamic 'staff' role — never a
     # teacher/student/authority role (which would smuggle that audience's pages).
     if role.user_type != "staff":
         raise HTTPException(status_code=400, detail="That role cannot be assigned to a staff member.")
@@ -110,12 +109,18 @@ async def create_staff(body: StaffCreate,
         staff = await StaffService.create(
             db, tenant_id=principal.tenant_uuid, rbac_role_id=body.rbac_role_id,
             first_name=body.first_name, last_name=body.last_name, phone=body.phone,
-            password=body.password, email=body.email, position=body.position,
+            email=body.email, position=body.position,
             created_by=principal.user_uuid,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"id": str(staff.id), "staff_id": staff.staff_id, "name": f"{staff.first_name} {staff.last_name}".strip()}
+    # No password, no invite. The user sets their own password at first login
+    # (phone + OTP, see /api/auth/signup/*).
+    return {
+        "id": str(staff.id), "staff_id": staff.staff_id,
+        "name": f"{staff.first_name} {staff.last_name}".strip(),
+        "login_enabled": False,
+    }
 
 
 @router.put("/{staff_id}")
@@ -160,10 +165,5 @@ async def reset_password(staff_id: str, body: PasswordBody,
     return {"id": staff_id, "detail": "password reset"}
 
 
-@router.delete("/{staff_id}")
-async def delete_staff(staff_id: str, principal: Principal = Depends(get_current_principal),
-                       db: AsyncSession = Depends(get_db)):
-    await _require_manage_staff(db, principal)
-    staff = await _load(db, principal, staff_id)
-    await StaffService.soft_delete(db, staff)
-    return {"id": staff_id, "detail": "deleted"}
+# Deleting users is intentionally NOT supported — it orphans their enrolments/marks/etc.
+# Use PATCH /{staff_id}/status to DEACTIVATE instead (keeps the record + history intact).

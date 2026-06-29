@@ -181,7 +181,7 @@ class TeacherTimetable(Base):
     
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    teacher_id = Column(UUID(as_uuid=True), ForeignKey("teachers.id"), nullable=False, index=True)
+    teacher_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)  # was teachers.id; now the teaching member's members.id
     master_timetable_id = Column(UUID(as_uuid=True), ForeignKey("master_timetables.id"), nullable=False, index=True)
     
     # Timetable Information
@@ -217,7 +217,7 @@ class TeacherTimetable(Base):
     
     # Relationships
     tenant = relationship("Tenant")
-    teacher_ref = relationship("Teacher", back_populates="teacher_timetables")
+    teacher_ref = relationship("Member")  # was Teacher (back_populates); now a one-way ref to the teaching member
     master_timetable = relationship("MasterTimetable", back_populates="teacher_timetables")
     schedule_entries = relationship("ScheduleEntry", back_populates="teacher_timetable")
 

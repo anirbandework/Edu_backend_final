@@ -6,7 +6,8 @@ from uuid import UUID
 
 from ...core.database import get_db
 from ...assessment_management.services.ai_quiz_generation_service import AIQuizService
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 from ...assessment_management.schemas.ai_quiz_management_schemas import (
     AIQuizCreateRequest, AIQuizResponse, AIQuizTemplateRequest, AIQuizTemplateResponse,
@@ -45,7 +46,7 @@ async def create_ai_quiz(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Create a complete AI-generated quiz with questions"""
     try:
@@ -64,7 +65,7 @@ async def get_ai_quiz_templates(
     grade_level: int,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get AI-suggested quiz templates"""
     try:
@@ -84,7 +85,7 @@ async def generate_quiz_from_template(
     tenant_id: UUID,
     class_ids: List[UUID],
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Generate quiz from AI template"""
     try:
@@ -219,7 +220,7 @@ async def get_teacher_ai_quiz_dashboard(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get teacher's AI quiz management dashboard"""
     try:
@@ -237,7 +238,7 @@ async def get_teacher_ai_quizzes(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Get all AI quizzes created by teacher"""
     try:
@@ -257,7 +258,7 @@ async def get_ai_quiz_class_analytics(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # cohort analytics: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # cohort analytics: staff only
 ):
     """Get AI-powered class analytics for quiz"""
     try:
@@ -276,7 +277,7 @@ async def delete_ai_quiz(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Delete AI quiz (soft delete)"""
     try:
@@ -299,7 +300,7 @@ async def update_ai_quiz_status(
     teacher_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('quizzes')),
 ):
     """Update AI quiz status"""
     try:

@@ -6,7 +6,8 @@ from fastapi.responses import Response
 
 from app.core.database import get_db
 
-from ...auth_rbac.security.deps import get_current_principal, require_super_admin, require_staff, assert_same_tenant
+from ...auth_rbac.security.deps import get_current_principal, require_super_admin, assert_same_tenant
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 
 router = APIRouter(prefix="/grading", tags=["Grading System"])
@@ -68,7 +69,7 @@ async def get_submissions_for_grading(
     assessment_id: UUID,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff)  # grading view: staff only (student PII + grades)
+    principal: Principal = Depends(require_authority_or_module('assignments'))  # grading view: staff only (student PII + grades)
 ):
     """Get all submissions for grading by teachers"""
 
@@ -82,7 +83,7 @@ async def get_submissions_for_grading(
                s.marks_obtained, s.grade_letter, s.teacher_feedback,
                st.first_name, st.last_name
         FROM assessment_submissions s
-        LEFT JOIN students st ON s.student_id = st.id
+        LEFT JOIN members st ON s.student_id = st.id
         WHERE s.assessment_id = :assessment_id AND s.tenant_id = :tenant_id
         ORDER BY s.submission_date DESC
     """), {"assessment_id": str(assessment_id), "tenant_id": str(effective_tenant)})
@@ -113,7 +114,7 @@ async def get_submissions_for_grading(
 async def download_submission_for_grading(
     submission_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff)  # grading download: staff only
+    principal: Principal = Depends(require_authority_or_module('assignments'))  # grading download: staff only
 ):
     """Download student submission for grading"""
 
@@ -122,14 +123,14 @@ async def download_submission_for_grading(
         result = await db.execute(text("""
             SELECT submission_pdf, pdf_filename, s.student_id, st.first_name, st.last_name
             FROM assessment_submissions s
-            LEFT JOIN students st ON s.student_id = st.id
+            LEFT JOIN members st ON s.student_id = st.id
             WHERE s.id = :submission_id AND s.submission_pdf IS NOT NULL
         """), {"submission_id": str(submission_id)})
     else:
         result = await db.execute(text("""
             SELECT submission_pdf, pdf_filename, s.student_id, st.first_name, st.last_name
             FROM assessment_submissions s
-            LEFT JOIN students st ON s.student_id = st.id
+            LEFT JOIN members st ON s.student_id = st.id
             WHERE s.id = :submission_id AND s.tenant_id = :tenant_id AND s.submission_pdf IS NOT NULL
         """), {"submission_id": str(submission_id), "tenant_id": str(principal.tenant_id)})
 
@@ -153,7 +154,7 @@ async def grade_submission(
     grade: str,
     feedback: str,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff)  # grading write: staff only (no self-grading)
+    principal: Principal = Depends(require_authority_or_module('assignments'))  # grading write: staff only (no self-grading)
 ):
     """Grade a student submission"""
 

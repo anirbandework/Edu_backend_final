@@ -9,7 +9,8 @@ import logging
 from ...core.database import get_db
 from ...assessment_management.services.ai_student_analytics_service import AILearningService
 from ...assessment_management.services.ai_report_generation_service import AIReportService
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 from ...assessment_management.schemas.ai_analytics_schemas import (
     StudentInsightsRequest, StudentInsightsResponse,
@@ -141,7 +142,7 @@ async def generate_intelligent_report(
     request: ReportGenerationRequest,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('grades')),
 ):
     """Generate AI-enhanced reports (student progress, class summary, parent reports)"""
     eff_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -171,7 +172,7 @@ async def analyze_intervention_needs(
     request: InterventionRequest,
     tenant_id: UUID,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # cohort intervention: staff only
+    principal: Principal = Depends(require_authority_or_module('grades')),  # cohort intervention: staff only
 ):
     """Identify students needing intervention and suggest strategies"""
     eff_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
@@ -192,7 +193,7 @@ async def batch_analyze_students(
     tenant_id: UUID,
     analysis_types: List[str] = ["insights", "recommendations", "weaknesses"],
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # bulk cohort analysis: staff only
+    principal: Principal = Depends(require_authority_or_module('grades')),  # bulk cohort analysis: staff only
 ):
     """Perform batch analysis for multiple students"""
     eff_tenant = tenant_id if principal.is_super_admin else principal.tenant_id

@@ -10,15 +10,15 @@ from ...core.database import get_db
 from ...attendance_management.services.attendance_service import AttendanceService
 from ...attendance_management.models.attendance import AttendanceStatus, AttendanceType, UserType
 from ...auth_rbac.security.deps import get_current_principal, require_super_admin, require_staff, assert_same_tenant
-from ...auth_rbac.access.deps import require_staff_or_module
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 
 
 def _principal_user_type(principal: Principal) -> UserType:
     """Map the authenticated principal's role to an attendance UserType — never trust a
-    client-supplied marker type. Teachers mark as TEACHER; authorities/super-admins as
-    SCHOOL_AUTHORITY."""
-    return UserType.TEACHER if principal.role == "teacher" else UserType.SCHOOL_AUTHORITY
+    client-supplied marker type. Authorities/super-admins mark as SCHOOL_AUTHORITY; a
+    dynamic-model member (role 'staff') marks as STAFF. Never emit TEACHER."""
+    return UserType.SCHOOL_AUTHORITY if (principal.is_authority or principal.is_super_admin) else UserType.STAFF
 
 
 def _coerce_user_type(value: Optional[str]) -> Optional[UserType]:
@@ -90,7 +90,7 @@ router = APIRouter(prefix="/api/v1/school_authority/attendance", tags=["School A
 async def mark_attendance(
     attendance_data: AttendanceCreate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance'))
+    principal: Principal = Depends(require_authority_or_module('attendance'))
 ):
     """Mark attendance for a user (student, teacher, or staff). Staff only."""
     service = AttendanceService(db)
@@ -124,7 +124,7 @@ async def bulk_mark_attendance(
     import_data: BulkAttendanceCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('attendance'))  # staff (teacher/authority/super-admin) only
 ):
     """Bulk mark attendance for multiple users"""
     service = AttendanceService(db)
@@ -146,7 +146,7 @@ async def bulk_mark_attendance(
 async def bulk_update_status(
     payload: BulkStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance')),  # staff only
+    principal: Principal = Depends(require_authority_or_module('attendance')),  # staff only
 ):
     """Bulk-update the status of given attendance records. The acting user is
     derived from the JWT (client-supplied updated_by is ignored)."""
@@ -162,7 +162,7 @@ async def bulk_update_status(
 async def bulk_approve_absences(
     payload: BulkApproveAbsences,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance')),  # staff only
+    principal: Principal = Depends(require_authority_or_module('attendance')),  # staff only
 ):
     """Bulk-approve (excuse) absences. The approver is the authenticated principal."""
     service = AttendanceService(db)
@@ -281,10 +281,10 @@ async def get_class_students_with_attendance(
                 c.section,
                 c.academic_year,
                 s.id as student_id,
-                s.student_id as student_number,
+                s.staff_id,
                 s.first_name,
                 s.last_name,
-                s.roll_number,
+                (s.profile->>'roll_number'),
                 a.id as attendance_id,
                 a.status as attendance_status,
                 a.attendance_time,
@@ -292,7 +292,7 @@ async def get_class_students_with_attendance(
                 a.is_excused
             FROM classes c
             JOIN enrollments e ON c.id = e.class_id
-            JOIN students s ON e.student_id = s.id
+            JOIN members s ON e.member_id = s.id
             LEFT JOIN attendances a ON (
                 s.id = a.user_id 
                 AND a.attendance_date = :attendance_date 
@@ -363,7 +363,7 @@ async def bulk_update_class_attendance(
     class_id: UUID,
     request: BulkAttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('attendance'))  # staff (teacher/authority/super-admin) only
 ):
     """Bulk update attendance for multiple students in a class"""
     service = AttendanceService(db)
@@ -434,18 +434,18 @@ async def get_grade_students_with_attendance(
         students_with_attendance_sql = text("""
             SELECT 
                 s.id as student_id,
-                s.student_id as student_number,
+                s.staff_id,
                 s.first_name,
                 s.last_name,
-                s.roll_number,
-                s.grade_level,
-                s.section,
+                (s.profile->>'roll_number'),
+                (s.profile->>'grade_level')::int,
+                (s.profile->>'section'),
                 a.id as attendance_id,
                 a.status as attendance_status,
                 a.attendance_time,
                 a.remarks,
                 a.is_excused
-            FROM students s
+            FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') s
             LEFT JOIN (
                 SELECT DISTINCT ON (user_id) 
                     id, user_id, status, attendance_time, remarks, is_excused
@@ -457,8 +457,8 @@ async def get_grade_students_with_attendance(
                 ORDER BY user_id, attendance_time DESC
             ) a ON s.id = a.user_id
             WHERE s.tenant_id = :tenant_id
-            AND s.grade_level = :grade_level
-            AND s.section = :section
+            AND (s.profile->>'grade_level')::int = :grade_level
+            AND (s.profile->>'section') = :section
             AND s.is_deleted = false
             AND s.status = 'active'
             ORDER BY s.first_name, s.last_name
@@ -515,7 +515,7 @@ async def bulk_update_grade_attendance(
     section: str,
     request: BulkAttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('attendance'))  # staff (teacher/authority/super-admin) only
 ):
     """Bulk update attendance for students in a grade+section"""
     service = AttendanceService(db)
@@ -577,7 +577,7 @@ async def get_staff_with_attendance(
         teachers_sql = text("""
             SELECT 
                 t.id as user_id,
-                t.teacher_id as user_number,
+                t.staff_id,
                 t.first_name,
                 t.last_name,
                 'TEACHER' as user_type,
@@ -587,7 +587,7 @@ async def get_staff_with_attendance(
                 a.attendance_time,
                 a.remarks,
                 a.is_excused
-            FROM teachers t
+            FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') t
             LEFT JOIN (
                 SELECT DISTINCT ON (user_id) 
                     id, user_id, status, attendance_time, remarks, is_excused
@@ -689,7 +689,7 @@ async def bulk_update_staff_attendance(
     tenant_id: UUID,
     request: BulkStaffAttendanceUpdate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff_or_module('attendance'))  # staff (teacher/authority/super-admin) only
+    principal: Principal = Depends(require_authority_or_module('attendance'))  # staff (teacher/authority/super-admin) only
 ):
     """Bulk update attendance for teachers, school authorities, and staff"""
     service = AttendanceService(db)
@@ -746,18 +746,18 @@ async def get_students_for_filter(
         sql = text("""
             SELECT 
                 s.id,
-                s.student_id,
+                s.staff_id,
                 s.first_name,
                 s.last_name,
-                s.grade_level,
-                s.section
-            FROM students s
+                (s.profile->>'grade_level')::int,
+                (s.profile->>'section')
+            FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') s
             WHERE s.tenant_id = :tenant_id
             AND s.is_deleted = false
             AND s.status = 'active'
-            AND (:grade_level::INTEGER IS NULL OR s.grade_level = :grade_level::INTEGER)
-            AND (:section::VARCHAR IS NULL OR s.section = :section::VARCHAR)
-            ORDER BY s.grade_level, s.section, s.first_name, s.last_name
+            AND (:grade_level::INTEGER IS NULL OR (s.profile->>'grade_level')::int = :grade_level::INTEGER)
+            AND (:section::VARCHAR IS NULL OR (s.profile->>'section') = :section::VARCHAR)
+            ORDER BY (s.profile->>'grade_level')::int, (s.profile->>'section'), s.first_name, s.last_name
         """)
         
         result = await db.execute(sql, {
@@ -803,12 +803,12 @@ async def get_staff_for_filter(
             teachers_sql = text("""
                 SELECT 
                     t.id,
-                    t.teacher_id,
+                    t.staff_id,
                     t.first_name,
                     t.last_name,
                     'TEACHER' as user_type,
                     t.position
-                FROM teachers t
+                FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') t
                 WHERE t.tenant_id = :tenant_id
                 AND t.is_deleted = false
                 AND t.status = 'active'

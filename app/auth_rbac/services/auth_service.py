@@ -11,9 +11,7 @@ from typing import Optional
 from uuid import UUID
 
 from ...school_authority_management.models.school_authority import SchoolAuthority
-from ...teacher_management.models.teacher import Teacher
-from ...student_management.models.student import Student
-from ...staff_management.models.staff_user import StaffUser
+from ...staff_management.models.member import Member
 
 
 def _iso(dt):
@@ -30,9 +28,7 @@ class AuthService:
         model = {
             "super_admin": SuperAdmin,
             "school_authority": SchoolAuthority,
-            "staff": StaffUser,
-            "teacher": Teacher,
-            "student": Student,
+            "staff": Member,
         }.get(role)
         if not model:
             return None
@@ -60,9 +56,9 @@ class AuthService:
             }
 
         # Unified dynamic-role staff
-        q = select(StaffUser).where(StaffUser.id == user_id)
+        q = select(Member).where(Member.id == user_id)
         if tenant_id:
-            q = q.where(StaffUser.tenant_id == tenant_id)
+            q = q.where(Member.tenant_id == tenant_id)
         staff = (await db.execute(q)).scalar_one_or_none()
         if staff:
             return {
@@ -114,78 +110,41 @@ class AuthService:
                 "tenant_id": str(auth.tenant_id),
             }
 
-        # Teacher
-        q = select(Teacher).where(Teacher.id == user_id)
+        # Any non-authority user is a Member (dynamic model). profile.category marks a
+        # "student" member; legacy teacher/student extras live in members.profile JSON.
+        q = select(Member).where(Member.id == user_id)
         if tenant_id:
-            q = q.where(Teacher.tenant_id == tenant_id)
-        teacher = (await db.execute(q)).scalar_one_or_none()
-        if teacher:
+            q = q.where(Member.tenant_id == tenant_id)
+        member = (await db.execute(q)).scalar_one_or_none()
+        if member:
+            prof = member.profile or {}
+            is_student = prof.get("category") == "student"
             return {
-                "user_id": str(teacher.id),
-                "user_type": "TEACHER",
-                "role": "teacher",
-                "teacher_id": teacher.teacher_id,
-                "first_name": teacher.first_name,
-                "last_name": teacher.last_name,
-                "email": teacher.email,
-                "phone": teacher.phone,
-                "date_of_birth": _iso(teacher.date_of_birth),
-                "address": teacher.address,
-                "gender": teacher.gender,
-                "position": teacher.position,
-                "qualification": teacher.qualification,
-                "experience_years": teacher.experience_years,
-                "joining_date": _iso(teacher.joining_date),
-                "status": teacher.status,
-                "teacher_details": teacher.teacher_details,
-                "personal_info": teacher.personal_info,
-                "contact_info": teacher.contact_info,
-                "family_info": teacher.family_info,
-                "qualifications": teacher.qualifications,
-                "employment": teacher.employment,
-                "academic_responsibilities": teacher.academic_responsibilities,
-                "timetable": teacher.timetable,
-                "performance_evaluation": teacher.performance_evaluation,
-                "last_login": _iso(teacher.last_login),
-                "tenant_id": str(teacher.tenant_id),
-            }
-
-        # Student
-        q = select(Student).where(Student.id == user_id)
-        if tenant_id:
-            q = q.where(Student.tenant_id == tenant_id)
-        student = (await db.execute(q)).scalar_one_or_none()
-        if student:
-            return {
-                "user_id": str(student.id),
-                "user_type": "STUDENT",
-                "role": "student",
-                "student_id": student.student_id,
-                "first_name": student.first_name,
-                "last_name": student.last_name,
-                "email": student.email,
-                "phone": student.phone,
-                "date_of_birth": _iso(student.date_of_birth),
-                "address": student.address,
-                "gender": student.gender,
-                "admission_number": student.admission_number,
-                "roll_number": student.roll_number,
-                "grade_level": student.grade_level,
-                "section": student.section,
-                "academic_year": student.academic_year,
-                "status": student.status,
-                "parent_info": student.parent_info,
-                "health_medical_info": student.health_medical_info,
-                "emergency_information": student.emergency_information,
-                "behavioral_disciplinary": student.behavioral_disciplinary,
-                "extended_academic_info": student.extended_academic_info,
-                "enrollment_details": student.enrollment_details,
-                "financial_info": student.financial_info,
-                "extracurricular_social": student.extracurricular_social,
-                "attendance_engagement": student.attendance_engagement,
-                "additional_metadata": student.additional_metadata,
-                "last_login": _iso(student.last_login),
-                "tenant_id": str(student.tenant_id),
+                "user_id": str(member.id),
+                "user_type": "STUDENT" if is_student else "STAFF",
+                "role": "student" if is_student else "staff",
+                "staff_id": member.staff_id,
+                "student_id": member.staff_id,
+                "teacher_id": member.staff_id,
+                "first_name": member.first_name,
+                "last_name": member.last_name,
+                "email": member.email,
+                "phone": member.phone,
+                "date_of_birth": _iso(member.date_of_birth),
+                "address": member.address,
+                "gender": member.gender,
+                "position": member.position,
+                "status": member.status,
+                "rbac_role_id": str(member.rbac_role_id) if member.rbac_role_id else None,
+                "roll_number": prof.get("roll_number"),
+                "admission_number": prof.get("admission_number"),
+                "grade_level": prof.get("grade_level"),
+                "section": prof.get("section"),
+                "academic_year": prof.get("academic_year"),
+                "parent_info": prof.get("parent_info"),
+                "profile": prof,
+                "last_login": _iso(member.last_login),
+                "tenant_id": str(member.tenant_id),
             }
 
         return None

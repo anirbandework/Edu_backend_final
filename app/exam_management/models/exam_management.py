@@ -108,7 +108,8 @@ class StudentExamMark(Base):
     # Foreign Keys
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
     exam_id = Column(UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False, index=True)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)
+    # The mark's subject is a MEMBER (the enrolled student), not the legacy students table.
+    member_id = Column(UUID(as_uuid=True), ForeignKey("members.id"), nullable=False, index=True)
     class_id = Column(UUID(as_uuid=True), ForeignKey("classes.id"), nullable=False, index=True)
     
     # Marking Information
@@ -131,9 +132,9 @@ class StudentExamMark(Base):
     
     # Constraints
     __table_args__ = (
-        UniqueConstraint('exam_id', 'student_id', name='uq_student_exam_mark'),
+        UniqueConstraint('exam_id', 'member_id', name='uq_member_exam_mark'),
         Index('idx_marks_tenant_exam', 'tenant_id', 'exam_id'),
-        Index('idx_marks_student', 'student_id', 'exam_id'),
+        Index('idx_marks_member', 'member_id', 'exam_id'),
         Index('idx_marks_status', 'marking_status', 'exam_id'),
         Index('idx_marks_class', 'class_id', 'exam_id'),
         CheckConstraint('obtained_marks >= 0', name='ck_obtained_marks_positive'),
@@ -143,7 +144,7 @@ class StudentExamMark(Base):
     # Relationships
     tenant = relationship("Tenant")
     exam = relationship("Exam", back_populates="student_marks")
-    student = relationship("Student")
+    member = relationship("Member")
     class_ref = relationship("ClassModel")
 
 class ExamTemplate(Base):

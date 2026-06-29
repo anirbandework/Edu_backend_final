@@ -161,6 +161,12 @@ async def create_tenant(
     """Create a new tenant (school). When an admin creates it, the school is
     stamped with owner_authority_id = that admin and becomes their active school
     if they had none."""
+    # Only the platform super-admin or a school authority (admin) may create an
+    # organisation — not teachers/students/staff (who could otherwise POST here
+    # directly and mint unowned schools).
+    if principal.role not in ("super_admin", "school_authority"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Only an admin or the platform super-admin can create an organisation")
     try:
         service = TenantService(db)
         
@@ -849,8 +855,8 @@ async def get_comprehensive_statistics(
         people = (await db.execute(text(
             """
             SELECT
-              (SELECT COUNT(*) FROM students WHERE is_deleted = false) AS students,
-              (SELECT COUNT(*) FROM teachers WHERE is_deleted = false) AS teachers,
+              (SELECT COUNT(*) FROM members WHERE is_deleted = false AND (profile->>'category') = 'student') AS students,
+              (SELECT COUNT(*) FROM members WHERE is_deleted = false AND (profile->>'category') IS DISTINCT FROM 'student') AS teachers,
               (SELECT COUNT(*) FROM school_authorities
                  WHERE is_deleted = false AND role = 'school_authority') AS admins,
               (SELECT COUNT(*) FROM school_authorities

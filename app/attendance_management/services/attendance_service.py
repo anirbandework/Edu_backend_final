@@ -37,8 +37,7 @@ class AttendanceService(BaseService[Attendance]):
         # derive it from the user being marked. attendances.tenant_id is NOT NULL.
         if tenant_id is None:
             row = (await self.db.execute(text(
-                "SELECT tenant_id FROM students WHERE id = :u "
-                "UNION SELECT tenant_id FROM teachers WHERE id = :u "
+                "SELECT tenant_id FROM members WHERE id = :u "
                 "UNION SELECT tenant_id FROM school_authorities WHERE id = :u LIMIT 1"
             ), {"u": str(user_id)})).fetchone()
             tenant_id = row[0] if row else None
@@ -100,38 +99,35 @@ class AttendanceService(BaseService[Attendance]):
     ) -> bool:
         """Validate if the marker has permission to mark attendance for the user"""
         
-        # School authorities can mark anyone's attendance
+        # School authorities (and super-admins, mapped to SCHOOL_AUTHORITY) mark anyone.
         if marked_by_type == UserType.SCHOOL_AUTHORITY:
             return True
-        
-        # Teachers can mark student attendance and their own attendance
-        if marked_by_type == UserType.TEACHER:
-            if user_type == UserType.STUDENT:
-                # Check if teacher is assigned to student's class
-                return await self._verify_teacher_student_relationship(marked_by, user_id)
-            elif user_type == UserType.TEACHER and marked_by == user_id:
-                # Teachers can mark their own attendance
-                return True
-            else:
-                return False
-        
-        # Students can only mark their own attendance (if allowed by policy)
+
+        # Dynamic model: a member granted the 'attendance' page (role 'staff') is already
+        # authorized by the route gate (require_authority_or_module('attendance')); the record
+        # itself is tenant-scoped. TEACHER is kept only as a legacy alias of STAFF.
+        if marked_by_type in (UserType.STAFF, UserType.TEACHER):
+            return True
+
+        # A self-marking member may mark only their own attendance.
         if marked_by_type == UserType.STUDENT:
             return marked_by == user_id and user_type == UserType.STUDENT
-        
+
         return False
     
     async def _verify_teacher_student_relationship(self, teacher_id: UUID, student_id: UUID) -> bool:
-        """Verify if teacher has permission to mark attendance for this student"""
-        # This would check if teacher teaches any class that the student is enrolled in
-        # Implementation depends on your class-teacher-student relationship model
-        
+        """DEPRECATED / UNUSED in the dynamic-member model. Authorization for marking/viewing
+        attendance is now the 'attendance' page grant (enforced at the route via
+        require_authority_or_module) plus tenant-scoping; this fine-grained class relationship
+        check is no longer called. Retained for reference only — the JSON-based teaching
+        assignment (classes.assigned_teachers) would need a rewrite before re-enabling."""
+        # NOTE: enrolment keys on members.id now (member_id), not the legacy students table.
         verify_sql = text("""
             SELECT COUNT(*) > 0
             FROM enrollments e
             JOIN classes c ON e.class_id = c.id
             JOIN class_subjects cs ON c.id = cs.class_id
-            WHERE e.student_id = :student_id
+            WHERE e.member_id = :student_id
             AND cs.teacher_id = :teacher_id
             AND e.status = 'active'
             AND e.is_deleted = false
@@ -604,8 +600,10 @@ class AttendanceService(BaseService[Attendance]):
         if requester_id == user_id and requester_type == user_type:
             return True
         
-        # Teachers can view their students' attendance
-        if requester_type == UserType.TEACHER and user_type == UserType.STUDENT:
-            return await self._verify_teacher_student_relationship(requester_id, user_id)
-        
+        # Dynamic model: a member granted the 'attendance' page (role 'staff'; TEACHER is a
+        # legacy alias) may view members' attendance within their tenant — the route gate
+        # authorizes the page and reads are tenant-scoped.
+        if requester_type in (UserType.STAFF, UserType.TEACHER):
+            return True
+
         return False

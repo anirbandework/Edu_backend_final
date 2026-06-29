@@ -11,33 +11,15 @@ run_production_migration.
 
 # (label, sql) — labels show up in the per-statement run log.
 MIGRATIONS = [
-    # ── auth: hashed passwords on the three identity tables ──────────────────
-    ("students.password_hash",
-     "ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
-    ("teachers.password_hash",
-     "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
+    # ── auth: hashed passwords on the identity tables ────────────────────────
     ("school_authorities.password_hash",
      "ALTER TABLE school_authorities ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255)"),
 
     # ── rbac: assigned role pointer on identity tables ───────────────────────
-    ("students.rbac_role_id",
-     "ALTER TABLE students ADD COLUMN IF NOT EXISTS rbac_role_id UUID"),
-    ("teachers.rbac_role_id",
-     "ALTER TABLE teachers ADD COLUMN IF NOT EXISTS rbac_role_id UUID"),
     ("school_authorities.rbac_role_id",
      "ALTER TABLE school_authorities ADD COLUMN IF NOT EXISTS rbac_role_id UUID"),
 
     # ── scalability: composite indexes on hot query paths ────────────────────
-    ("ix students(tenant,grade,section)",
-     "CREATE INDEX IF NOT EXISTS ix_students_tenant_grade_section ON students (tenant_id, grade_level, section)"),
-    ("ix students(tenant,status)",
-     "CREATE INDEX IF NOT EXISTS ix_students_tenant_status ON students (tenant_id, status)"),
-    ("ix students(tenant,name)",
-     "CREATE INDEX IF NOT EXISTS ix_students_tenant_name ON students (tenant_id, last_name, first_name)"),
-    ("ix teachers(tenant,status)",
-     "CREATE INDEX IF NOT EXISTS ix_teachers_tenant_status ON teachers (tenant_id, status)"),
-    ("ix teachers(tenant,name)",
-     "CREATE INDEX IF NOT EXISTS ix_teachers_tenant_name ON teachers (tenant_id, first_name, last_name)"),
     ("ix classes(tenant,year)",
      "CREATE INDEX IF NOT EXISTS ix_classes_tenant_year ON classes (tenant_id, academic_year)"),
     ("ix attendances(tenant,user,date)",
@@ -66,18 +48,8 @@ MIGRATIONS = [
     # ── rbac: indexes + FK (ON DELETE SET NULL) on the role pointer ──────────
     ("ix school_authorities.rbac_role_id",
      "CREATE INDEX IF NOT EXISTS ix_school_authorities_rbac_role ON school_authorities (rbac_role_id)"),
-    ("ix teachers.rbac_role_id",
-     "CREATE INDEX IF NOT EXISTS ix_teachers_rbac_role ON teachers (rbac_role_id)"),
-    ("ix students.rbac_role_id",
-     "CREATE INDEX IF NOT EXISTS ix_students_rbac_role ON students (rbac_role_id)"),
     ("fk school_authorities.rbac_role_id",
      "ALTER TABLE school_authorities ADD CONSTRAINT fk_authorities_rbac_role "
-     "FOREIGN KEY (rbac_role_id) REFERENCES rbac_roles(id) ON DELETE SET NULL"),
-    ("fk teachers.rbac_role_id",
-     "ALTER TABLE teachers ADD CONSTRAINT fk_teachers_rbac_role "
-     "FOREIGN KEY (rbac_role_id) REFERENCES rbac_roles(id) ON DELETE SET NULL"),
-    ("fk students.rbac_role_id",
-     "ALTER TABLE students ADD CONSTRAINT fk_students_rbac_role "
      "FOREIGN KEY (rbac_role_id) REFERENCES rbac_roles(id) ON DELETE SET NULL"),
 
     # ── super-admin → admin → schools model ──────────────────────────────────
@@ -97,4 +69,10 @@ MIGRATIONS = [
     # Login is by phone+password; email is optional on admins.
     ("school_authorities.email nullable",
      "ALTER TABLE school_authorities ALTER COLUMN email DROP NOT NULL"),
+
+    # ── rbac: 2nd per-org ceiling — which pages the ADMIN sees in their OWN
+    #    sidebar (separate from the distributable authority/teacher/student cols).
+    #    Default TRUE so existing orgs keep "admin sees everything".
+    ("tenant_module_permissions.admin_enabled",
+     "ALTER TABLE tenant_module_permissions ADD COLUMN IF NOT EXISTS admin_enabled BOOLEAN NOT NULL DEFAULT TRUE"),
 ]

@@ -5,7 +5,8 @@ from uuid import UUID, uuid4
 from fastapi.responses import Response
 
 from app.core.database import get_db
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 
 router = APIRouter(prefix="/cbse-pdf", tags=["CBSE PDF"])
@@ -17,7 +18,7 @@ async def upload_sample_paper(
     tenant_id: UUID,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),  # uploading study material: staff only
+    principal: Principal = Depends(require_authority_or_module('quizzes')),  # uploading study material: staff only
 ):
     """Upload PDF sample paper"""
 

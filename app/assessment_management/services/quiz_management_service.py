@@ -329,7 +329,7 @@ class QuizService:
                 qa.is_completed,
                 qa.is_submitted
             FROM quiz_attempts qa
-            JOIN students s ON qa.student_id = s.id
+            JOIN members s ON qa.student_id = s.id
             WHERE qa.quiz_id = :quiz_id 
             AND qa.tenant_id = :tenant_id
             AND qa.is_submitted = true
@@ -438,7 +438,7 @@ class QuizService:
                 JOIN questions q ON qa.question_id = q.id
                 JOIN quiz_attempts qz_att ON qa.attempt_id = qz_att.id
                 JOIN quizzes quiz ON qz_att.quiz_id = quiz.id
-                JOIN students s ON qz_att.student_id = s.id
+                JOIN members s ON qz_att.student_id = s.id
                 WHERE quiz.teacher_id = :teacher_id 
                 AND quiz.tenant_id = :tenant_id
                 AND q.question_type = 'short_answer'
@@ -547,7 +547,7 @@ class QuizService:
                     qa.results_published
                 FROM quiz_attempts qa
                 JOIN quizzes quiz ON qa.quiz_id = quiz.id
-                JOIN students s ON qa.student_id = s.id
+                JOIN members s ON qa.student_id = s.id
                 WHERE quiz.teacher_id = :teacher_id 
                 AND quiz.tenant_id = :tenant_id
                 AND qa.is_submitted = true

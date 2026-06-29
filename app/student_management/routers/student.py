@@ -1,19 +1,33 @@
-# app/routers/school_authority/student.py
+# app/student_management/routers/student.py
+#
+# The admin "Students" page is backed by the UNIFIED `members` table (Member ORM),
+# NOT the legacy `students` table. A "student" is a Member row tagged with
+# profile['category'] == 'student'. API paths are unchanged
+# (/api/v1/school_authority/students/...) and the response JSON shapes are
+# preserved (profile-stored keys are read back out and re-exposed as top-level
+# keys) so the frontend keeps working. The legacy students table / Student ORM is
+# intentionally untouched (still FK'd by exams/assessments/chat) and is no longer
+# referenced here. New students land in `members` and are immediately enrollable.
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel, EmailStr, field_validator
 from datetime import datetime
 from ...core.database import get_db
-from ...student_management.models.student import Student
+from ...staff_management.models.member import Member
 from ...enrollment_management.models.enrollment import Enrollment
 from ...class_management.models.class_model import ClassModel
 from ...student_management.services.student_service import StudentService
 from ...auth_rbac.security.deps import get_current_principal, require_super_admin, require_authority, assert_same_tenant
 from ...auth_rbac.access.deps import require_authority_or_module
-from ...auth_rbac.security.principal import Principal, ROLE_STUDENT
-from ...auth_rbac.services import invitation_service
+from ...auth_rbac.security.principal import Principal
+
+
+def _p(member, key, default=None):
+    """Read a profile-stored key back out of members.profile."""
+    return (member.profile or {}).get(key, default)
 
 # Pydantic Models
 class StudentCreate(BaseModel):
@@ -126,36 +140,37 @@ async def get_students(
             section=section
         )
         
-        # Format student data with full JSON fields
+        # Format student data with full JSON fields (profile keys read back out).
         formatted_students = [
             {
                 "id": str(student.id),
+                "member_id": str(student.id),
                 "tenant_id": str(student.tenant_id),
-                "student_id": student.student_id,
+                "student_id": student.staff_id,
                 "first_name": student.first_name,
                 "last_name": student.last_name,
                 "email": student.email,
                 "phone": student.phone,
                 "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None,
                 "address": student.address,
-                "grade_level": student.grade_level,
-                "section": student.section,
-                "admission_number": student.admission_number,
-                "roll_number": student.roll_number,
-                "academic_year": student.academic_year,
+                "grade_level": _p(student, "grade_level"),
+                "section": _p(student, "section"),
+                "admission_number": _p(student, "admission_number"),
+                "roll_number": _p(student, "roll_number"),
+                "academic_year": _p(student, "academic_year"),
                 "status": student.status,
-                "parent_info": student.parent_info,
-                "health_medical_info": student.health_medical_info,
-                "emergency_information": student.emergency_information,
-                "behavioral_disciplinary": student.behavioral_disciplinary,
-                "extended_academic_info": student.extended_academic_info,
-                "enrollment_details": student.enrollment_details,
-                "financial_info": student.financial_info,
-                "extracurricular_social": student.extracurricular_social,
-                "attendance_engagement": student.attendance_engagement,
-                "additional_metadata": student.additional_metadata,
-                "created_at": student.created_at.isoformat(),
-                "updated_at": student.updated_at.isoformat()
+                "parent_info": _p(student, "parent_info"),
+                "health_medical_info": _p(student, "health_medical_info"),
+                "emergency_information": _p(student, "emergency_information"),
+                "behavioral_disciplinary": _p(student, "behavioral_disciplinary"),
+                "extended_academic_info": _p(student, "extended_academic_info"),
+                "enrollment_details": _p(student, "enrollment_details"),
+                "financial_info": _p(student, "financial_info"),
+                "extracurricular_social": _p(student, "extracurricular_social"),
+                "attendance_engagement": _p(student, "attendance_engagement"),
+                "additional_metadata": _p(student, "additional_metadata"),
+                "created_at": student.created_at.isoformat() if student.created_at else None,
+                "updated_at": student.updated_at.isoformat() if student.updated_at else None
             }
             for student in result["items"]
         ]
@@ -188,27 +203,16 @@ async def create_student(
         student_dict["tenant_id"] = principal.tenant_id
     student = await service.create(student_dict)
 
-    resp = {
+    # No password, no invite. The student sets their own password at first login
+    # (phone + OTP, see /api/auth/signup/*).
+    return {
         "id": str(student.id),
+        "member_id": str(student.id),
         "message": "Student created successfully",
-        "student_id": student.student_id,
-        "admission_number": student.admission_number,
-        "login_enabled": False,  # no password until the invite is accepted
+        "student_id": student.staff_id,
+        "admission_number": _p(student, "admission_number"),
+        "login_enabled": False,
     }
-    # Onboarding: a school authority can immediately issue a signup invite so the new
-    # student (or parent) can set a password and log in. Super-admins can't invite students.
-    if principal.is_authority:
-        try:
-            inv = await invitation_service.create_invitation(
-                db, principal, role=ROLE_STUDENT, target_user_id=str(student.id),
-                first_name=student.first_name, last_name=student.last_name, email=student.email,
-            )
-            resp["invitation_link"] = invitation_service.signup_url(inv.token)
-        except HTTPException:
-            raise
-        except Exception:
-            resp["invitation_link"] = None
-    return resp
 
 @router.get("/{student_id}", response_model=dict)
 async def get_student(
@@ -226,37 +230,39 @@ async def get_student(
     
     return {
         "id": str(student.id),
+        "member_id": str(student.id),
         "tenant_id": str(student.tenant_id),
-        "student_id": student.student_id,
+        "student_id": student.staff_id,
         "first_name": student.first_name,
         "last_name": student.last_name,
         "email": student.email,
         "phone": student.phone,
         "date_of_birth": student.date_of_birth.isoformat() if student.date_of_birth else None,
         "address": student.address,
-        "role": student.role,
+        # FE-visible role stays 'student' (the backing member.role is 'staff').
+        "role": "student",
         "status": student.status,
-        "admission_number": student.admission_number,
-        "roll_number": student.roll_number,
-        "grade_level": student.grade_level,
-        "section": student.section,
-        "academic_year": student.academic_year,
-        
-        # Extended information from JSON fields
-        "parent_info": student.parent_info,
-        "health_medical_info": student.health_medical_info,
-        "emergency_information": student.emergency_information,
-        "behavioral_disciplinary": student.behavioral_disciplinary,
-        "extended_academic_info": student.extended_academic_info,
-        "enrollment_details": student.enrollment_details,
-        "financial_info": student.financial_info,
-        "extracurricular_social": student.extracurricular_social,
-        "attendance_engagement": student.attendance_engagement,
-        "additional_metadata": student.additional_metadata,
-        
+        "admission_number": _p(student, "admission_number"),
+        "roll_number": _p(student, "roll_number"),
+        "grade_level": _p(student, "grade_level"),
+        "section": _p(student, "section"),
+        "academic_year": _p(student, "academic_year"),
+
+        # Extended information from profile JSON
+        "parent_info": _p(student, "parent_info"),
+        "health_medical_info": _p(student, "health_medical_info"),
+        "emergency_information": _p(student, "emergency_information"),
+        "behavioral_disciplinary": _p(student, "behavioral_disciplinary"),
+        "extended_academic_info": _p(student, "extended_academic_info"),
+        "enrollment_details": _p(student, "enrollment_details"),
+        "financial_info": _p(student, "financial_info"),
+        "extracurricular_social": _p(student, "extracurricular_social"),
+        "attendance_engagement": _p(student, "attendance_engagement"),
+        "additional_metadata": _p(student, "additional_metadata"),
+
         "last_login": student.last_login.isoformat() if student.last_login else None,
-        "created_at": student.created_at.isoformat(),
-        "updated_at": student.updated_at.isoformat()
+        "created_at": student.created_at.isoformat() if student.created_at else None,
+        "updated_at": student.updated_at.isoformat() if student.updated_at else None
     }
 
 @router.put("/{student_id}", response_model=dict)
@@ -281,21 +287,9 @@ async def update_student(
         "message": "Student updated successfully"
     }
 
-@router.delete("/{student_id}")
-async def delete_student(
-    student_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_authority_or_module('students'))  # writes: authority/super-admin only
-):
-    """Soft delete student"""
-    service = StudentService(db)
-    scope_tenant = None if principal.is_super_admin else principal.tenant_id
-    success = await service.soft_delete(student_id, tenant_id=scope_tenant)
-
-    if not success:
-        raise HTTPException(status_code=404, detail="Student not found")
-    
-    return {"message": "Student deactivated successfully"}
+# Deleting students is intentionally NOT supported — it orphans their enrolments/marks/
+# attendance. DEACTIVATE instead via PUT /{student_id} with status='inactive' (or
+# POST /bulk/update-status), which keeps the record + academic history intact.
 
 @router.get("/tenant/{tenant_id}")
 async def get_students_by_tenant(
@@ -313,12 +307,13 @@ async def get_students_by_tenant(
     return [
         {
             "id": str(student.id),
-            "student_id": student.student_id,
-            "name": f"{student.first_name} {student.last_name}",
+            "member_id": str(student.id),
+            "student_id": student.staff_id,
+            "name": f"{student.first_name} {student.last_name}".strip(),
             "email": student.email,
-            "grade_level": student.grade_level,
-            "section": student.section,
-            "admission_number": student.admission_number,
+            "grade_level": _p(student, "grade_level"),
+            "section": _p(student, "section"),
+            "admission_number": _p(student, "admission_number"),
             "status": student.status
         }
         for student in students
@@ -332,12 +327,14 @@ async def get_student_classes(
     principal: Principal = Depends(get_current_principal)
 ):
     """Get all classes that a student belongs to"""
-    from sqlalchemy import select
-
-    # Verify student exists
-    student_stmt = select(Student).where(Student.id == student_id, Student.is_deleted == False)
+    # Verify the student-member exists (members.profile->>'category' = 'student').
+    student_stmt = select(Member).where(
+        Member.id == student_id,
+        Member.is_deleted == False,
+        Member.profile["category"].as_string() == "student",
+    )
     if not principal.is_super_admin:
-        student_stmt = student_stmt.where(Student.tenant_id == principal.tenant_id)
+        student_stmt = student_stmt.where(Member.tenant_id == principal.tenant_id)
     student_result = await db.execute(student_stmt)
     student = student_result.scalar_one_or_none()
 
@@ -349,7 +346,7 @@ async def get_student_classes(
         select(ClassModel, Enrollment)
         .join(Enrollment, ClassModel.id == Enrollment.class_id)
         .where(
-            Enrollment.student_id == student_id,
+            Enrollment.member_id == student_id,  # enrolment keys on members.id now (legacy route)
             Enrollment.status == "active",
             ClassModel.is_deleted == False,
             Enrollment.is_deleted == False
@@ -383,13 +380,14 @@ async def get_student_classes(
     return {
         "student_info": {
             "id": str(student.id),
-            "student_id": student.student_id,
+            "member_id": str(student.id),
+            "student_id": student.staff_id,
             "first_name": student.first_name,
             "last_name": student.last_name,
-            "full_name": f"{student.first_name} {student.last_name}",
-            "grade_level": student.grade_level,
-            "section": student.section,
-            "academic_year": student.academic_year
+            "full_name": f"{student.first_name} {student.last_name}".strip(),
+            "grade_level": _p(student, "grade_level"),
+            "section": _p(student, "section"),
+            "academic_year": _p(student, "academic_year")
         },
         "classes": classes_data,
         "total_classes": len(classes_data)
@@ -408,23 +406,24 @@ async def get_students_by_tenant_and_grade(
     effective_tenant = tenant_id if principal.is_super_admin else principal.tenant_id
     service = StudentService(db)
     students = await service.get_students_by_grade(grade_level, effective_tenant)
-    
-    # Filter by section if provided
+
+    # Filter by section if provided (section now lives in members.profile)
     if section:
-        students = [s for s in students if s.section == section]
-    
+        students = [s for s in students if _p(s, "section") == section]
+
     return {
         "students": [
             {
                 "id": str(student.id),
-                "student_id": student.student_id,
+                "member_id": str(student.id),
+                "student_id": student.staff_id,
                 "first_name": student.first_name,
                 "last_name": student.last_name,
-                "full_name": f"{student.first_name} {student.last_name}",
+                "full_name": f"{student.first_name} {student.last_name}".strip(),
                 "email": student.email,
-                "section": student.section,
-                "roll_number": student.roll_number,
-                "grade_level": student.grade_level,
+                "section": _p(student, "section"),
+                "roll_number": _p(student, "roll_number"),
+                "grade_level": _p(student, "grade_level"),
                 "status": student.status
             }
             for student in students
@@ -447,11 +446,12 @@ async def get_students_by_grade(
     return [
         {
             "id": str(student.id),
-            "student_id": student.student_id,
-            "name": f"{student.first_name} {student.last_name}",
+            "member_id": str(student.id),
+            "student_id": student.staff_id,
+            "name": f"{student.first_name} {student.last_name}".strip(),
             "email": student.email,
-            "section": student.section,
-            "roll_number": student.roll_number,
+            "section": _p(student, "section"),
+            "roll_number": _p(student, "roll_number"),
             "status": student.status
         }
         for student in students
@@ -566,26 +566,7 @@ async def bulk_update_sections(
         **result
     }
 
-@router.post("/bulk/delete", response_model=dict)
-async def bulk_delete_students(
-    delete_data: BulkDeleteRequest,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_authority_or_module('students'))  # writes: authority/super-admin only
-):
-    """Bulk soft delete students"""
-    assert_same_tenant(principal, delete_data.tenant_id)
-    effective_tenant = delete_data.tenant_id if principal.is_super_admin else principal.tenant_id
-    service = StudentService(db)
-
-    result = await service.bulk_soft_delete(
-        student_ids=delete_data.student_ids,
-        tenant_id=effective_tenant
-    )
-    
-    return {
-        "message": f"Bulk delete completed. {result['deleted_students']} students deactivated",
-        **result
-    }
+# Bulk DELETE removed — use POST /bulk/update-status to deactivate many students at once.
 
 @router.get("/statistics/{tenant_id}", response_model=dict)
 async def get_student_statistics(
@@ -645,10 +626,10 @@ async def export_students(
                 ],
                 "data": [
                     [
-                        student.student_id, student.first_name, student.last_name,
+                        student.staff_id, student.first_name, student.last_name,
                         student.email or "", student.phone or "",
-                        student.grade_level, student.section or "",
-                        student.admission_number, student.academic_year, student.status
+                        _p(student, "grade_level"), _p(student, "section") or "",
+                        _p(student, "admission_number"), _p(student, "academic_year"), student.status
                     ]
                     for student in students
                 ],
@@ -661,17 +642,18 @@ async def export_students(
                 "students": [
                     {
                         "id": str(student.id),
-                        "student_id": student.student_id,
+                        "member_id": str(student.id),
+                        "student_id": student.staff_id,
                         "first_name": student.first_name,
                         "last_name": student.last_name,
                         "email": student.email,
                         "phone": student.phone,
-                        "grade_level": student.grade_level,
-                        "section": student.section,
-                        "admission_number": student.admission_number,
-                        "academic_year": student.academic_year,
+                        "grade_level": _p(student, "grade_level"),
+                        "section": _p(student, "section"),
+                        "admission_number": _p(student, "admission_number"),
+                        "academic_year": _p(student, "academic_year"),
                         "status": student.status,
-                        "created_at": student.created_at.isoformat()
+                        "created_at": student.created_at.isoformat() if student.created_at else None
                     }
                     for student in students
                 ],

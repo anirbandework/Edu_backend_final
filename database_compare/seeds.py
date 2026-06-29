@@ -12,8 +12,8 @@ from app.auth_rbac.security.password import hash_password
 
 _SEED_ROLES = [
     ("school_authority", "school_authorities", "Administrator", "administrator"),
-    ("teacher", "teachers", "Teacher", "teacher"),
-    ("student", "students", "Student", "student"),
+    # teachers/students removed — those tables were dropped in the legacy teardown.
+    # Non-admin users are now `members` (created via /api/staff with their own password).
 ]
 
 

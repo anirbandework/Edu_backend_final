@@ -349,12 +349,12 @@ class AIQuizService:
                 continue
         
         # Get student names for at-risk and top performers
-        from ...student_management.models.student import Student
+        from ...staff_management.models.member import Member  # student-subject id is a members.id now
         at_risk_with_names = []
         top_performers_with_names = []
         
         for student_id in at_risk_students:
-            student_query = select(Student).where(Student.id == student_id)
+            student_query = select(Member).where(Member.id == student_id)
             student_result = await db.execute(student_query)
             student = student_result.scalar_one_or_none()
             if student:
@@ -364,7 +364,7 @@ class AIQuizService:
                 })
         
         for student_id in top_performers:
-            student_query = select(Student).where(Student.id == student_id)
+            student_query = select(Member).where(Member.id == student_id)
             student_result = await db.execute(student_query)
             student = student_result.scalar_one_or_none()
             if student:

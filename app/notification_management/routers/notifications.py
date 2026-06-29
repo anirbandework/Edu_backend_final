@@ -89,8 +89,8 @@ async def _validate_and_get_sender_type(db: AsyncSession, sender_id: UUID) -> Se
     
     # Check if sender is a student FIRST (should not be allowed to send)
     student_sql = text("""
-        SELECT id FROM students 
-        WHERE id = :sender_id AND is_deleted = false
+        SELECT id FROM members 
+        WHERE id = :sender_id AND is_deleted = false AND (profile->>'category') = 'student'
     """)
     result = await db.execute(student_sql, {"sender_id": str(sender_id)})
     student_result = result.fetchone()
@@ -115,8 +115,8 @@ async def _validate_and_get_sender_type(db: AsyncSession, sender_id: UUID) -> Se
     
     # Check if sender is a teacher
     teacher_sql = text("""
-        SELECT id FROM teachers 
-        WHERE id = :sender_id AND is_deleted = false
+        SELECT id FROM members 
+        WHERE id = :sender_id AND is_deleted = false AND (profile->>'category') IS DISTINCT FROM 'student'
     """)
     result = await db.execute(teacher_sql, {"sender_id": str(sender_id)})
     teacher_result = result.fetchone()
@@ -126,7 +126,7 @@ async def _validate_and_get_sender_type(db: AsyncSession, sender_id: UUID) -> Se
 
     # Check if sender is a dynamic staff user (faculty/principal/HOD/office...)
     staff_sql = text("""
-        SELECT id FROM staff_users
+        SELECT id FROM members
         WHERE id = :sender_id AND is_deleted = false
     """)
     result = await db.execute(staff_sql, {"sender_id": str(sender_id)})
@@ -657,13 +657,13 @@ async def debug_sender_check(
         results = {}
         
         # Check students
-        student_sql = text("SELECT id, first_name, last_name FROM students WHERE id = :sender_id AND is_deleted = false")
+        student_sql = text("SELECT id, first_name, last_name FROM members WHERE id = :sender_id AND is_deleted = false AND (profile->>'category') = 'student'")
         result = await db.execute(student_sql, {"sender_id": sender_id})
         student = result.fetchone()
         results["student"] = {"found": bool(student), "data": f"{student[1]} {student[2]}" if student else None}
         
         # Check teachers
-        teacher_sql = text("SELECT id, teacher_id FROM teachers WHERE id = :sender_id AND is_deleted = false")
+        teacher_sql = text("SELECT id, staff_id FROM members WHERE id = :sender_id AND is_deleted = false AND (profile->>'category') IS DISTINCT FROM 'student'")
         result = await db.execute(teacher_sql, {"sender_id": sender_id})
         teacher = result.fetchone()
         results["teacher"] = {"found": bool(teacher), "data": teacher[1] if teacher else None}
@@ -698,8 +698,8 @@ async def debug_student_check(
                 status,
                 tenant_id,
                 is_deleted
-            FROM students
-            WHERE id = :student_id
+            FROM members
+            WHERE id = :student_id AND (profile->>'category') = 'student'
         """)
         
         result = await db.execute(student_sql, {"student_id": student_id})
@@ -799,17 +799,19 @@ async def debug_student_classes(
         student_class_sql = text("""
             SELECT 
                 s.id,
-                s.class_id,
+                en.class_id,
                 s.first_name,
                 s.last_name,
                 c.class_name,
                 c.grade_level,
                 c.section
-            FROM students s
-            LEFT JOIN classes c ON s.class_id = c.id
+            FROM members s
+            LEFT JOIN enrollments en ON en.member_id = s.id AND en.status = 'active'
+            LEFT JOIN classes c ON en.class_id = c.id
             WHERE s.id = :student_id
             AND s.tenant_id = :tenant_id
             AND s.is_deleted = false
+            AND (s.profile->>'category') = 'student'
         """)
         
         result = await db.execute(student_class_sql, {"student_id": student_id, "tenant_id": tenant_id})
@@ -847,7 +849,8 @@ async def debug_available_classes(
                 c.status,
                 COUNT(s.id) as student_count
             FROM classes c
-            LEFT JOIN students s ON c.id = s.class_id AND s.status = 'active' AND s.is_deleted = false
+            LEFT JOIN enrollments en ON en.class_id = c.id AND en.status = 'active'
+            LEFT JOIN members s ON s.id = en.member_id AND s.status = 'active' AND s.is_deleted = false AND (s.profile->>'category') = 'student'
             WHERE c.tenant_id = :tenant_id
             AND c.is_deleted = false
             GROUP BY c.id, c.class_name, c.grade_level, c.section, c.status

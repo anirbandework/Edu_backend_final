@@ -67,8 +67,6 @@ class Tenant(Base):
     
     # Relationships - optimized for 100k+ scale
     authorities = relationship("SchoolAuthority", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
-    teachers = relationship("Teacher", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
-    students = relationship("Student", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
     classes = relationship("ClassModel", back_populates="tenant", cascade="all, delete-orphan", lazy="dynamic")
     
 

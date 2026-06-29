@@ -104,20 +104,13 @@ async def my_permissions(
     principal: Principal = Depends(get_current_principal),
     db: AsyncSession = Depends(get_db),
 ):
-    # The ADMIN sidebar is CONSTANT: the org-grant (super-admin ceiling) limits
-    # what the admin may GIVE to their users + what those users can use, NOT the
-    # admin's own management toolset. So an admin always sees every page enabled.
+    # The ADMIN's OWN sidebar is now a super-admin-controlled ceiling ("Admin
+    # pages"): only the admin-audience pages the super-admin left ON for this org
+    # are shown. This is SEPARATE from the distributable org ceiling (what the
+    # admin may hand to their users' roles). Required pages (Profile) stay on.
     if principal.role == "school_authority":
-        return {
-            "user_type": principal.role,
-            "modules": [
-                {"module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
-                 "path": m["path"], "enabled": True, "required": bool(m.get("required")), "locked": False,
-                 "tabs": [{"tab_key": t[0], "tab_label": t[1]} for t in m["tabs"]],
-                 "tab_permissions": {t[0]: True for t in m["tabs"]}, "locked_tabs": {}}
-                for m in catalog.MODULES
-            ],
-        }
+        modules = await RBACService.get_admin_permissions(db, principal.tenant_uuid)
+        return {"user_type": principal.role, "modules": modules}
     if principal.is_super_admin:
         # super-admin sees the full catalog as "enabled"
         return {
@@ -187,6 +180,37 @@ async def set_org_pages_bulk(tenant_id: str, body: ModuleToggle,
     """Enable or revoke ALL (non-required) pages for an org at once."""
     _valid_tenant(tenant_id)
     await RBACService.set_all_org_pages(db, tenant_id, body.enabled, by=_actor(principal))
+    return {"tenant_id": tenant_id, "enabled": body.enabled}
+
+
+# ---------- admin page grant (super-admin: which pages the ADMIN sees) ----------
+@router.get("/org/{tenant_id}/admin-pages")
+async def org_admin_pages(tenant_id: str, principal: Principal = Depends(require_super_admin),
+                          db: AsyncSession = Depends(get_db)):
+    """Per-page grant for the ADMIN's own sidebar (separate from the distributable
+    org pages). Lists every admin-audience page incl. admin-only tools."""
+    return await RBACService.get_admin_pages(db, _valid_tenant(tenant_id))
+
+
+@router.put("/org/{tenant_id}/admin-page/{module_key}")
+async def set_org_admin_page(tenant_id: str, module_key: str, body: ModuleToggle,
+                             principal: Principal = Depends(require_super_admin),
+                             db: AsyncSession = Depends(get_db)):
+    _valid_tenant(tenant_id)
+    try:
+        await RBACService.set_admin_page(db, tenant_id, module_key, body.enabled, by=_actor(principal))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"tenant_id": tenant_id, "module_key": module_key, "enabled": body.enabled}
+
+
+@router.post("/org/{tenant_id}/admin-pages/bulk")
+async def set_org_admin_pages_bulk(tenant_id: str, body: ModuleToggle,
+                                   principal: Principal = Depends(require_super_admin),
+                                   db: AsyncSession = Depends(get_db)):
+    """Show or hide ALL (non-required) admin pages for an org at once."""
+    _valid_tenant(tenant_id)
+    await RBACService.set_all_admin_pages(db, tenant_id, body.enabled, by=_actor(principal))
     return {"tenant_id": tenant_id, "enabled": body.enabled}
 
 
@@ -363,32 +387,9 @@ async def list_users(user_type: str, principal: Principal = Depends(require_auth
     } for x in rows]
 
 
-# ---------- assignment (authority assigns a role to a user in their tenant) ----------
-@router.post("/assign")
-async def assign_role(body: AssignRole, principal: Principal = Depends(require_authority),
-                      db: AsyncSession = Depends(get_db)):
-    tbl = _IDENTITY_TABLE.get(body.user_type)
-    if not tbl:
-        raise HTTPException(status_code=400, detail="invalid user_type")
-    # The tenant the UPDATE is scoped to (prevents cross-tenant assignment).
-    scope_tenant = None if principal.is_super_admin else principal.tenant_id
-    if body.role_id:
-        role = await RBACService.get_role(db, body.role_id)
-        if not role or role.user_type != body.user_type:
-            raise HTTPException(status_code=400, detail="role/user_type mismatch")
-        if not principal.is_super_admin and str(role.tenant_id) != str(principal.tenant_id):
-            raise HTTPException(status_code=403, detail="role belongs to another school")
-        scope_tenant = str(role.tenant_id)  # always scope to the role's own tenant
-    where = "id = :uid"
-    params = {"uid": body.user_id, "rid": body.role_id}
-    if scope_tenant is not None:
-        where += " AND tenant_id = :tid"
-        params["tid"] = scope_tenant
-    res = await db.execute(text(f"UPDATE {tbl} SET rbac_role_id = :rid WHERE {where}"), params)
-    await db.commit()
-    if (res.rowcount or 0) == 0:
-        raise HTTPException(status_code=404, detail="user not found in your school")
-    return {"detail": "assigned"}
+# NOTE: role assignment is done via /api/staff (StaffService, delegation-gated);
+# the old POST /api/access/assign was unused by the app and had weaker rules, so
+# it was removed.
 
 
 # ---------- tenant ceiling (tier-0: super-admin) ----------

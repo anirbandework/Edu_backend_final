@@ -14,7 +14,8 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from ...auth_rbac.security.deps import get_current_principal, require_staff
+from ...auth_rbac.security.deps import get_current_principal
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...auth_rbac.security.principal import Principal
 from ..models.grading_system_models import (
     Assessment, AssessmentType, AssessmentStatus, AssessmentSubmission,
@@ -90,7 +91,7 @@ async def _get_or_create_subject(db: AsyncSession, tenant_id: UUID, name: str,
 async def create_assignment(
     payload: AssignmentCreate,
     db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_staff),
+    principal: Principal = Depends(require_authority_or_module('assignments')),
 ):
     """Create an assignment for a class. teacher_id is the authenticated teacher;
     subject is resolved/created by name. Published immediately so students see it."""
@@ -151,7 +152,7 @@ async def list_student_assignments(
     class_rows = await db.execute(
         select(Enrollment.class_id).where(
             and_(
-                Enrollment.student_id == student_id,
+                Enrollment.member_id == student_id,  # enrolment keys on members.id now
                 Enrollment.status == "active",
                 Enrollment.is_deleted == False,
             )

@@ -1,4 +1,4 @@
-"""StaffService — CRUD for the unified staff_users table + delegation checks."""
+"""StaffService — CRUD for the unified members table + delegation checks."""
 from __future__ import annotations
 import uuid
 from datetime import datetime
@@ -8,7 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models.staff_user import StaffUser
+from ..models.member import Member
 from ...auth_rbac.security.password import hash_password
 from ...auth_rbac.access.service import RBACService
 from ...auth_rbac.access.models import RbacRole
@@ -21,10 +21,10 @@ def _gen_staff_id() -> str:
 class StaffService:
     @staticmethod
     async def list_staff(db: AsyncSession, tenant_id) -> list[dict]:
-        stmt = select(StaffUser).where(StaffUser.tenant_id == tenant_id)
-        if hasattr(StaffUser, "is_deleted"):
-            stmt = stmt.where(StaffUser.is_deleted == False)  # noqa: E712
-        rows = (await db.execute(stmt.order_by(StaffUser.created_at.desc()))).scalars().all()
+        stmt = select(Member).where(Member.tenant_id == tenant_id)
+        if hasattr(Member, "is_deleted"):
+            stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
+        rows = (await db.execute(stmt.order_by(Member.created_at.desc()))).scalars().all()
         # role names in one shot
         role_ids = {str(s.rbac_role_id) for s in rows if s.rbac_role_id}
         role_names: dict[str, str] = {}
@@ -36,7 +36,7 @@ class StaffService:
         return [StaffService._serialize(s, role_names) for s in rows]
 
     @staticmethod
-    def _serialize(s: StaffUser, role_names: dict) -> dict:
+    def _serialize(s: Member, role_names: dict) -> dict:
         return {
             "id": str(s.id),
             "staff_id": s.staff_id,
@@ -54,19 +54,19 @@ class StaffService:
         }
 
     @staticmethod
-    async def get(db: AsyncSession, staff_id, tenant_id) -> Optional[StaffUser]:
-        stmt = select(StaffUser).where(StaffUser.id == staff_id, StaffUser.tenant_id == tenant_id)
-        if hasattr(StaffUser, "is_deleted"):
-            stmt = stmt.where(StaffUser.is_deleted == False)  # noqa: E712
+    async def get(db: AsyncSession, staff_id, tenant_id) -> Optional[Member]:
+        stmt = select(Member).where(Member.id == staff_id, Member.tenant_id == tenant_id)
+        if hasattr(Member, "is_deleted"):
+            stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
         return (await db.execute(stmt)).scalar_one_or_none()
 
     @staticmethod
     async def _phone_taken(db: AsyncSession, phone: str, exclude_id=None) -> bool:
         """Phone must be unique across EVERY identity table — login resolves a user
-        by phone across school_authorities/staff_users/teachers/students, so a
+        by phone across school_authorities/members/teachers/students, so a
         collision would let one account shadow another at login."""
-        # staff_users (allow excluding the row being updated)
-        q = "SELECT 1 FROM staff_users WHERE phone = :p AND is_deleted = false"
+        # members (allow excluding the row being updated)
+        q = "SELECT 1 FROM members WHERE phone = :p AND is_deleted = false"
         params = {"p": phone}
         if exclude_id:
             q += " AND id <> :eid"
@@ -85,16 +85,16 @@ class StaffService:
     @staticmethod
     async def create(
         db: AsyncSession, *, tenant_id, rbac_role_id, first_name, last_name, phone,
-        password, email=None, position=None, created_by=None,
-    ) -> StaffUser:
+        password=None, email=None, position=None, created_by=None,
+    ) -> Member:
         phone = (phone or "").strip()
         if not phone:
             raise ValueError("Phone number is required.")
-        if not password:
-            raise ValueError("Password is required.")
         if await StaffService._phone_taken(db, phone):
             raise ValueError("A user with this phone number already exists.")
-        staff = StaffUser(
+        # Password-less by design: the admin never sets a password. The user sets
+        # their own at first login (phone + OTP); status='invited' until they do.
+        staff = Member(
             tenant_id=tenant_id,
             rbac_role_id=rbac_role_id,
             staff_id=_gen_staff_id(),
@@ -102,9 +102,9 @@ class StaffService:
             last_name=(last_name or "").strip(),
             email=(email or None),
             phone=phone,
-            password_hash=hash_password(password),
+            password_hash=hash_password(password) if password else None,
             position=(position or None),
-            status="active",
+            status="active" if password else "invited",
             role="staff",
             created_by=created_by,
         )
@@ -119,8 +119,8 @@ class StaffService:
         return staff
 
     @staticmethod
-    async def update(db: AsyncSession, staff: StaffUser, *, first_name=None, last_name=None,
-                     email=None, phone=None, position=None, rbac_role_id=None) -> StaffUser:
+    async def update(db: AsyncSession, staff: Member, *, first_name=None, last_name=None,
+                     email=None, phone=None, position=None, rbac_role_id=None) -> Member:
         if phone is not None:
             phone = phone.strip()
             if phone and phone != staff.phone and await StaffService._phone_taken(db, phone, exclude_id=staff.id):
@@ -145,21 +145,21 @@ class StaffService:
         return staff
 
     @staticmethod
-    async def set_status(db: AsyncSession, staff: StaffUser, active: bool) -> StaffUser:
+    async def set_status(db: AsyncSession, staff: Member, active: bool) -> Member:
         staff.status = "active" if active else "inactive"
         await db.commit()
         await db.refresh(staff)
         return staff
 
     @staticmethod
-    async def reset_password(db: AsyncSession, staff: StaffUser, new_password: str) -> None:
+    async def reset_password(db: AsyncSession, staff: Member, new_password: str) -> None:
         if not new_password:
             raise ValueError("Password is required.")
         staff.password_hash = hash_password(new_password)
         await db.commit()
 
     @staticmethod
-    async def soft_delete(db: AsyncSession, staff: StaffUser) -> None:
+    async def soft_delete(db: AsyncSession, staff: Member) -> None:
         if hasattr(staff, "is_deleted"):
             staff.is_deleted = True
         staff.status = "inactive"

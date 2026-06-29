@@ -19,7 +19,6 @@ from .core.cache import cache_service
 from .routers.health import router as health_router
 from .tenant_management.routers.tenant import router as tenant_router
 from .school_authority_management.routers.school_authority import router as school_authority_router
-from .teacher_management.routers.teacher import router as teacher_router
 from .student_management.routers.student import router as student_router
 from .class_management.routers.class_management import router as class_router
 from .enrollment_management.routers.enrollment import router as enrollment_router
@@ -37,8 +36,8 @@ from .auth_rbac.access.router import router as access_rbac_router
 # Eagerly register the SuperAdmin model (only lazily imported in login_service)
 # so the startup create_all below also builds the super_admins table.
 from .auth_rbac.models.super_admin import SuperAdmin  # noqa: F401
-# Eager import so create_all builds staff_users + role_creatable_roles.
-from .staff_management.models.staff_user import StaffUser  # noqa: F401
+# Eager import so create_all builds members + role_creatable_roles.
+from .staff_management.models.member import Member  # noqa: F401
 from .auth_rbac.access.models import RoleCreatableRole  # noqa: F401
 from .models.base import Base
 # NOTE: the legacy page-based access routers (user_role, user_access, role_management,
@@ -232,7 +231,6 @@ app.include_router(tenant_router, dependencies=SUPERADMIN)
 
 # Authenticated resource routers
 app.include_router(school_authority_router, dependencies=AUTHED)
-app.include_router(teacher_router, dependencies=AUTHED)
 app.include_router(student_router, dependencies=AUTHED)
 app.include_router(class_router, dependencies=AUTHED)
 app.include_router(enrollment_router, dependencies=AUTHED)

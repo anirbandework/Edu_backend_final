@@ -9,7 +9,6 @@ from datetime import datetime
 from ..models.exam_management import (
     Exam, ExamClass, StudentExamMark, ExamTemplate, BulkMarkingBatch
 )
-from ...student_management.models.student import Student
 from ...class_management.models.class_model import ClassModel
 from ..schemas.exam_schemas import (
     ExamCreate, ExamUpdate, StudentMarkCreate, StudentMarkUpdate, BulkMarkingRequest
@@ -107,7 +106,7 @@ class ExamService:
         stmt = select(StudentExamMark).filter(
             and_(
                 StudentExamMark.exam_id == exam_id,
-                StudentExamMark.student_id == UUID(mark_data.student_id),
+                StudentExamMark.member_id == UUID(mark_data.student_id),
                 StudentExamMark.tenant_id == tenant_id
             )
         )
@@ -128,7 +127,7 @@ class ExamService:
         student_mark = StudentExamMark(
             tenant_id=tenant_id,
             exam_id=exam_id,
-            student_id=UUID(mark_data.student_id),
+            member_id=UUID(mark_data.student_id),  # API key 'student_id' carries a members.id
             class_id=class_id,
             marks_data=mark_data.marks_data,
             total_marks=mark_data.total_marks,
@@ -172,7 +171,7 @@ class ExamService:
                     class_query = text("""
                         SELECT c.id FROM classes c
                         JOIN enrollments e ON c.id = e.class_id
-                        WHERE e.student_id = :student_id AND c.tenant_id = :tenant_id
+                        WHERE e.member_id = :student_id AND c.tenant_id = :tenant_id
                         AND e.status = 'active'
                         LIMIT 1
                     """)
@@ -197,7 +196,7 @@ class ExamService:
                     # Upsert student mark using raw SQL for performance
                     upsert_query = text("""
                         INSERT INTO student_exam_marks (
-                            id, tenant_id, exam_id, student_id, class_id, marks_data,
+                            id, tenant_id, exam_id, member_id, class_id, marks_data,
                             total_marks, obtained_marks, percentage, grade, remarks,
                             attendance_status, marked_by, marked_at, created_at, updated_at
                         ) VALUES (
@@ -205,7 +204,7 @@ class ExamService:
                             :total_marks, :obtained_marks, :percentage, :grade, :remarks,
                             :attendance_status, :marked_by, :marked_at, :created_at, :updated_at
                         )
-                        ON CONFLICT (exam_id, student_id)
+                        ON CONFLICT (exam_id, member_id)
                         DO UPDATE SET
                             marks_data = EXCLUDED.marks_data,
                             total_marks = EXCLUDED.total_marks,
@@ -298,7 +297,7 @@ class ExamService:
             StudentExamMark, 
             and_(
                 Exam.id == StudentExamMark.exam_id,
-                StudentExamMark.student_id == student_id
+                StudentExamMark.member_id == student_id
             )
         ).filter(
             and_(
@@ -345,7 +344,7 @@ class ExamService:
             StudentExamMark,
             and_(
                 Exam.id == StudentExamMark.exam_id,
-                StudentExamMark.student_id == student_id,
+                StudentExamMark.member_id == student_id,
             )
         ).filter(
             and_(

@@ -10,8 +10,6 @@ from ..models.grading_system_models import (
     AssessmentType, AssessmentStatus, SubmissionStatus
 )
 from ...timetable_management.models.timetable import Subject
-from ...student_management.models.student import Student
-from ...teacher_management.models.teacher import Teacher
 from ...class_management.models.class_model import ClassModel
 from ...core.config_assessment import assessment_settings
 import logging

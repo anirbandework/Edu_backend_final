@@ -1,4 +1,4 @@
-"""StaffUser — the UNIFIED identity table for every dynamic-role user a school
+"""Member — the UNIFIED identity table for every dynamic-role user a school
 creates (faculty, principal, HOD, office staff, librarian, accountant, ...).
 
 Unlike teachers/students/school_authorities, a staff user has no fixed canonical
@@ -13,8 +13,8 @@ from sqlalchemy.orm import relationship
 from ...models.base import Base
 
 
-class StaffUser(Base):
-    __tablename__ = "staff_users"
+class Member(Base):
+    __tablename__ = "members"
 
     # The school this staff member belongs to (always scoped to one tenant).
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)

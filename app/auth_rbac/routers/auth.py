@@ -73,25 +73,7 @@ class InviteStaffRequest(BaseModel):
     section: Optional[str] = None      # student only
 
 
-class InviteResponse(BaseModel):
-    token: str
-    invite_url: str
-    role: str
-    expires_at: str
-    target_user_id: Optional[str] = None
-
-
-class InvitePublicInfo(BaseModel):
-    role: str
-    tenant_id: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone: Optional[str] = None
-    email: Optional[str] = None
-
-
 class SignupOtpRequest(BaseModel):
-    token: str
     phone: str
 
 
@@ -101,7 +83,6 @@ class OtpSentResponse(BaseModel):
 
 
 class SignupVerifyRequest(BaseModel):
-    token: str
     phone: str
     otp: str
     password: str
@@ -253,71 +234,10 @@ async def change_password(
     return {"detail": "Password changed successfully"}
 
 
-# ----------------------------- invitations -----------------------------
-@router.post("/invites/authority", response_model=InviteResponse)
-async def invite_authority(
-    body: InviteAuthorityRequest,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_super_admin),
-):
-    """Super-admin invites a School Authority into a given school."""
-    user = await signup_service.create_invited_user(
-        db, role="school_authority", tenant_id=body.tenant_id,
-        first_name=body.first_name, last_name=body.last_name,
-        email=body.email, phone=body.phone,
-    )
-    inv = await invitation_service.create_invitation(
-        db, principal, role="school_authority", tenant_id=body.tenant_id,
-        phone=body.phone, email=body.email, first_name=body.first_name,
-        last_name=body.last_name, target_user_id=str(user.id),
-    )
-    return InviteResponse(token=inv.token, invite_url=invitation_service.signup_url(inv.token),
-                          role=inv.role, expires_at=_iso(inv.expires_at), target_user_id=str(user.id))
-
-
-@router.post("/invites/teacher", response_model=InviteResponse)
-async def invite_teacher(
-    body: InviteStaffRequest,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_authority),
-):
-    """School authority invites a Teacher into their school."""
-    user = await signup_service.create_invited_user(
-        db, role="teacher", tenant_id=principal.tenant_id,
-        first_name=body.first_name, last_name=body.last_name,
-        email=body.email, phone=body.phone,
-    )
-    inv = await invitation_service.create_invitation(
-        db, principal, role="teacher", phone=body.phone, email=body.email,
-        first_name=body.first_name, last_name=body.last_name, target_user_id=str(user.id),
-    )
-    return InviteResponse(token=inv.token, invite_url=invitation_service.signup_url(inv.token),
-                          role=inv.role, expires_at=_iso(inv.expires_at), target_user_id=str(user.id))
-
-
-@router.post("/invites/student", response_model=InviteResponse)
-async def invite_student(
-    body: InviteStaffRequest,
-    db: AsyncSession = Depends(get_db),
-    principal: Principal = Depends(require_authority),
-):
-    """School authority invites a Student into their school."""
-    extra = {}
-    if body.grade_level is not None:
-        extra["grade_level"] = body.grade_level
-    if body.section is not None:
-        extra["section"] = body.section
-    user = await signup_service.create_invited_user(
-        db, role="student", tenant_id=principal.tenant_id,
-        first_name=body.first_name, last_name=body.last_name,
-        email=body.email, phone=body.phone, extra=extra,
-    )
-    inv = await invitation_service.create_invitation(
-        db, principal, role="student", phone=body.phone, email=body.email,
-        first_name=body.first_name, last_name=body.last_name, target_user_id=str(user.id),
-    )
-    return InviteResponse(token=inv.token, invite_url=invitation_service.signup_url(inv.token),
-                          role=inv.role, expires_at=_iso(inv.expires_at), target_user_id=str(user.id))
+# NOTE: there is NO invite system. The super-admin creates admins via POST /admins and
+# the admin creates staff via POST /api/staff — both password-less. Each user then sets
+# their OWN password at first login (phone + OTP, see /signup/*). Teacher/Student are not
+# roles; every non-admin is a dynamic `staff` member with an assigned rbac_role.
 
 
 # ----------------------------- super-admin: ADMINS -----------------------------
@@ -326,7 +246,6 @@ class CreateAdminRequest(BaseModel):
     first_name: str
     last_name: str
     phone: str
-    password: str
     email: Optional[str] = None
     modules: list[str] = Field(default_factory=list)  # granted module keys
 
@@ -387,23 +306,18 @@ async def create_admin(
     is optional; the admin creates their school(s) after first login."""
     if not body.phone.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone is required.")
-    if len(body.password) < MIN_PASSWORD_LEN:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Password must be at least {MIN_PASSWORD_LEN} characters.")
     await invitation_service.assert_phone_available(db, body.phone)
 
-    # Reuse the standard creation (sets authority_id, position, etc.), then
-    # activate immediately with the chosen password.
+    # Create the admin password-less (status='invited'); the granted pages are stored
+    # now. They set their own password at first login (phone + OTP) — no link needed.
     user = await signup_service.create_invited_user(
         db, role="school_authority", tenant_id=None,
         first_name=body.first_name, last_name=body.last_name,
         email=(body.email.strip() or None) if body.email else None, phone=body.phone.strip(),
         extra={"permissions": {"modules": body.modules}},
     )
-    user.password_hash = hash_password(body.password)
-    user.status = "active"
-    await db.commit()
     await db.refresh(user)
+    # No invite. The admin sets their own password at first login (phone + OTP).
     return {**_admin_dict(user), "message": "Admin created"}
 
 
@@ -618,39 +532,29 @@ async def create_my_school(
             "school_code": tenant.school_code, "message": "School created"}
 
 
-@router.get("/invites/{token}", response_model=InvitePublicInfo)
-async def get_invite(token: str, db: AsyncSession = Depends(get_db)):
-    """Public: the signup screen calls this to render the invite (role, prefilled name/phone)."""
-    inv = await invitation_service.get_valid_invitation(db, token)
-    return InvitePublicInfo(role=inv.role, tenant_id=str(inv.tenant_id) if inv.tenant_id else None,
-                            first_name=inv.first_name, last_name=inv.last_name,
-                            phone=inv.phone, email=inv.email)
-
-
-# ----------------------------- signup (invite + OTP) -----------------------------
+# ----------------------------- first-login signup (phone + OTP, NO invite) -----------------------------
+# The admin creates the user (password-less). The user then sets their OWN password here:
+# enter phone -> OTP -> password. There is no invite link or token anywhere.
 @router.post("/signup/request-otp", response_model=OtpSentResponse)
 async def signup_request_otp(body: SignupOtpRequest, db: AsyncSession = Depends(get_db)):
-    inv = await invitation_service.get_valid_invitation(db, body.token)
-    # if the invite fixed a phone, the signup phone must match it
-    if inv.phone and inv.phone.strip() and inv.phone.strip() != body.phone.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone does not match the invitation.")
-    # reject phones already registered to an active account
-    await invitation_service.assert_phone_available(db, body.phone, exclude_user_id=str(inv.target_user_id) if inv.target_user_id else None)
+    user, _ = await signup_service.find_pending_account_by_phone(db, body.phone)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account awaiting setup for this phone. Ask your admin to add you "
+                   "first, or use 'Forgot password' if you've already set one.")
     res = await otp.request_otp(body.phone, otp.PURPOSE_SIGNUP)
     return OtpSentResponse(sent=res.sent, dev_code=res.dev_code)
 
 
 @router.post("/signup/verify", response_model=TokenResponse)
 async def signup_verify(body: SignupVerifyRequest, db: AsyncSession = Depends(get_db)):
-    inv = await invitation_service.get_valid_invitation(db, body.token)
-    if inv.phone and inv.phone.strip() and inv.phone.strip() != body.phone.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone does not match the invitation.")
     await otp.verify_otp(body.phone, otp.PURPOSE_SIGNUP, body.otp)
     user = await signup_service.complete_signup(
-        db, inv, phone=body.phone, password=body.password,
+        db, phone=body.phone, password=body.password,
         first_name=body.first_name, last_name=body.last_name,
     )
-    role = getattr(user, "role", inv.role) or inv.role
+    role = getattr(user, "role", None) or "staff"
     tenant_id = str(user.tenant_id) if getattr(user, "tenant_id", None) else None
     # auto-login
     return TokenResponse(

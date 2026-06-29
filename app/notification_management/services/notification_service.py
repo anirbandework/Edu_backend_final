@@ -176,16 +176,16 @@ class NotificationService(BaseService[Notification]):
                     CASE 
                         WHEN n.sender_type = 'school_authority' THEN CONCAT(sa.first_name, ' ', sa.last_name)
                         WHEN n.sender_type = 'teacher' THEN CONCAT(
-                            COALESCE(t.personal_info->'basic_details'->>'first_name', ''),
+                            COALESCE(t.first_name, ''),
                             ' ',
-                            COALESCE(t.personal_info->'basic_details'->>'last_name', '')
+                            COALESCE(t.last_name, '')
                         )
                         ELSE 'System'
                     END as sender_name
                 FROM notifications n
                 JOIN notification_recipients nr ON n.id = nr.notification_id
                 LEFT JOIN school_authorities sa ON n.sender_id = sa.id AND n.sender_type = 'school_authority'
-                LEFT JOIN teachers t ON n.sender_id = t.id AND n.sender_type = 'teacher'
+                LEFT JOIN members t ON n.sender_id = t.id AND n.sender_type = 'teacher'
                 {base_where}
                 ORDER BY n.created_at DESC
                 LIMIT :limit
@@ -338,7 +338,7 @@ class NotificationService(BaseService[Notification]):
                 if student_ids:
                     student_sql = text("""
                         SELECT id, first_name, last_name, email, phone
-                        FROM students
+                        FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') AS students
                         WHERE id = ANY(:student_ids)
                         AND tenant_id = :tenant_id
                         AND is_deleted = false
@@ -366,11 +366,11 @@ class NotificationService(BaseService[Notification]):
                 if teacher_ids:
                     teacher_sql = text("""
                         SELECT id, 
-                               personal_info->'basic_details'->>'first_name' as first_name,
-                               personal_info->'basic_details'->>'last_name' as last_name,
-                               personal_info->'contact_info'->>'primary_email' as email,
-                               personal_info->'contact_info'->>'primary_phone' as phone
-                        FROM teachers
+                               first_name as first_name,
+                               last_name as last_name,
+                               email as email,
+                               phone as phone
+                        FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') AS teachers
                         WHERE id = ANY(:teacher_ids)
                         AND tenant_id = :tenant_id
                         AND is_deleted = false
@@ -427,7 +427,7 @@ class NotificationService(BaseService[Notification]):
                 # All students in tenant
                 all_students_sql = text("""
                     SELECT id, first_name, last_name, email, phone
-                    FROM students
+                    FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') AS students
                     WHERE tenant_id = :tenant_id
                     AND status = 'active'
                     AND is_deleted = false
@@ -452,11 +452,11 @@ class NotificationService(BaseService[Notification]):
                 # All teachers in tenant
                 all_teachers_sql = text("""
                     SELECT id,
-                           personal_info->'basic_details'->>'first_name' as first_name,
-                           personal_info->'basic_details'->>'last_name' as last_name,
-                           personal_info->'contact_info'->>'primary_email' as email,
-                           personal_info->'contact_info'->>'primary_phone' as phone
-                    FROM teachers
+                           first_name as first_name,
+                           last_name as last_name,
+                           email as email,
+                           phone as phone
+                    FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') AS teachers
                     WHERE tenant_id = :tenant_id
                     AND status = 'active'
                     AND is_deleted = false
@@ -524,8 +524,8 @@ class NotificationService(BaseService[Notification]):
                             # Get students through enrollments table
                             class_students_sql = text("""
                                 SELECT s.id, s.first_name, s.last_name, s.email, s.phone
-                                FROM students s
-                                JOIN enrollments e ON s.id = e.student_id
+                                FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') s
+                                JOIN enrollments e ON s.id = e.member_id
                                 WHERE e.class_id = :class_id
                                 AND s.tenant_id = :tenant_id
                                 AND s.is_deleted = false
@@ -554,11 +554,11 @@ class NotificationService(BaseService[Notification]):
                             # Get teachers assigned to class
                             class_teachers_sql = text("""
                                 SELECT DISTINCT t.id,
-                                       t.personal_info->'basic_details'->>'first_name' as first_name,
-                                       t.personal_info->'basic_details'->>'last_name' as last_name,
-                                       t.personal_info->'contact_info'->>'primary_email' as email,
-                                       t.personal_info->'contact_info'->>'primary_phone' as phone
-                                FROM teachers t
+                                       t.first_name as first_name,
+                                       t.last_name as last_name,
+                                       t.email as email,
+                                       t.phone as phone
+                                FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') t
                                 JOIN classes c ON c.assigned_teachers::jsonb @> ('[{"teacher_id":"' || t.id || '"}]')::jsonb
                                 WHERE c.id = :class_id
                                 AND t.tenant_id = :tenant_id
@@ -590,8 +590,8 @@ class NotificationService(BaseService[Notification]):
                     
                     grade_students_sql = text("""
                         SELECT s.id, s.first_name, s.last_name, s.email, s.phone
-                        FROM students s
-                        JOIN enrollments e ON s.id = e.student_id
+                        FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') s
+                        JOIN enrollments e ON s.id = e.member_id
                         JOIN classes c ON e.class_id = c.id
                         WHERE c.grade_level = ANY(:grades)
                         AND s.tenant_id = :tenant_id
@@ -628,8 +628,8 @@ class NotificationService(BaseService[Notification]):
                     try:
                         grade_students_sql = text("""
                             SELECT id, first_name, last_name, email, phone
-                            FROM students
-                            WHERE grade_level = ANY(:grade_levels)
+                            FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') AS students
+                            WHERE (profile->>'grade_level')::int = ANY(:grade_levels)
                             AND tenant_id = :tenant_id
                             AND status = 'active'
                             AND is_deleted = false
@@ -661,17 +661,17 @@ class NotificationService(BaseService[Notification]):
                 # Use single optimized query to get all recipients
                 all_recipients_sql = text("""
                     SELECT 'student' as type, id, first_name, last_name, email, phone
-                    FROM students
+                    FROM (SELECT * FROM members WHERE (profile->>'category') = 'student') AS students
                     WHERE tenant_id = :tenant_id AND status = 'active' AND is_deleted = false
                     
                     UNION ALL
                     
                     SELECT 'teacher' as type, id,
-                           personal_info->'basic_details'->>'first_name' as first_name,
-                           personal_info->'basic_details'->>'last_name' as last_name,
-                           personal_info->'contact_info'->>'primary_email' as email,
-                           personal_info->'contact_info'->>'primary_phone' as phone
-                    FROM teachers
+                           first_name as first_name,
+                           last_name as last_name,
+                           email as email,
+                           phone as phone
+                    FROM (SELECT * FROM members WHERE (profile->>'category') IS DISTINCT FROM 'student') AS teachers
                     WHERE tenant_id = :tenant_id AND status = 'active' AND is_deleted = false
                     
                     UNION ALL

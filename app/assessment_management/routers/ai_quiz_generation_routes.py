@@ -8,7 +8,7 @@ from uuid import UUID
 from ...core.database import get_db
 from ...assessment_management.services.ai_quiz_generation_service import AIQuizService
 from ...core.rate_limiter import rate_limiter
-from ...auth_rbac.security.deps import require_staff
+from ...auth_rbac.access.deps import require_authority_or_module
 from ...assessment_management.schemas.ai_analytics_schemas import (
     QuestionGenerationRequest, QuestionGenerationResponse,
     QuizAssemblyRequest, QuizAssemblyResponse,
@@ -21,7 +21,7 @@ from ...assessment_management.schemas.ai_analytics_schemas import (
 # whole router to staff (blocks students from question injection, cross-tenant grading,
 # cohort analytics and AI cost-abuse). Per-endpoint tenant-binding still TODO (see
 # ASSESSMENT_AUTHZ_REMEDIATION.md).
-router = APIRouter(prefix="/ai-quiz", tags=["AI Quiz"], dependencies=[Depends(require_staff)])
+router = APIRouter(prefix="/ai-quiz", tags=["AI Quiz"], dependencies=[Depends(require_authority_or_module('quizzes'))])
 
 @router.post("/generate-questions", response_model=QuestionGenerationResponse)
 async def generate_questions(
