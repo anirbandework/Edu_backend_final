@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..security.password import hash_password_async
 from ..security.principal import ROLE_AUTHORITY, ROLE_STAFF
-from . import invitation_service
+from . import phone_service
 from ...authority_management.models.authority import Authority
 from ...staff_management.models.member import Member
 
@@ -45,7 +45,7 @@ async def create_invited_user(
     """Create a user record in 'invited' state. Returns the created object."""
     # Reject a phone already in use before creating the record.
     if phone:
-        await invitation_service.assert_phone_available(db, phone)
+        await phone_service.assert_phone_available(db, phone)
     model = _MODEL_BY_ROLE[role]
     fields = dict(
         organisation_id=organisation_id,
@@ -126,6 +126,15 @@ async def complete_signup(
         default_role_id = await RBACService.get_default_role_id(db, user.organisation_id, role)
         if default_role_id:
             user.rbac_role_id = default_role_id
+
+    # Never activate a role-less STAFF account (an active user must have a role). Raise
+    # BEFORE commit so nothing persists — the user stays pending until an admin assigns a
+    # role. (Defensive: members are normally created with a role.)
+    if role == ROLE_STAFF and getattr(user, "rbac_role_id", None) is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Your account isn't assigned to a role yet. Ask your administrator to "
+                   "assign one, then try signing in again.")
 
     await db.commit()
     await db.refresh(user)

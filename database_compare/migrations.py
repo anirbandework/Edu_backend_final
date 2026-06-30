@@ -117,4 +117,38 @@ MIGRATIONS = [
     #    auto-created head/Principal), gaining a phone later to enable login.
     ("members.phone nullable",
      "ALTER TABLE members ALTER COLUMN phone DROP NOT NULL"),
+
+    # ── per-role custom fields: admin-defined extra fields collected when adding a
+    #    user to a role (grade, parent name, address, ...). JSON list of field defs.
+    #    Filled values are stored on members.profile['custom_fields'] (existing JSON).
+    ("rbac_roles.custom_fields",
+     "ALTER TABLE rbac_roles ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb"),
+
+    # ── scale: indexes for the Staff & Users search/filter at 100k+ members/org ──
+    # The directory search uses ILIKE '%term%' (leading wildcard) on name/email/phone,
+    # which a btree index can't serve. pg_trgm GIN indexes make it index-backed.
+    ("extension pg_trgm",
+     "CREATE EXTENSION IF NOT EXISTS pg_trgm"),
+    ("ix members.first_name trgm",
+     "CREATE INDEX IF NOT EXISTS ix_members_first_trgm ON members USING gin (first_name gin_trgm_ops)"),
+    ("ix members.last_name trgm",
+     "CREATE INDEX IF NOT EXISTS ix_members_last_trgm ON members USING gin (last_name gin_trgm_ops)"),
+    # The directory search also ILIKEs email + phone (leading wildcard) — index those too.
+    ("ix members.email trgm",
+     "CREATE INDEX IF NOT EXISTS ix_members_email_trgm ON members USING gin (email gin_trgm_ops)"),
+    ("ix members.phone trgm",
+     "CREATE INDEX IF NOT EXISTS ix_members_phone_trgm ON members USING gin (phone gin_trgm_ops)"),
+    # staff_id is a human code — keep it unique per org on live rows (defends bulk imports).
+    # (Skipped automatically if legacy duplicates exist; dedup then re-run.)
+    ("uq members.staff_id (active)",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_members_staff_id_active "
+     "ON members (organisation_id, staff_id) WHERE is_deleted = false"),
+    # rbac_roles.organisation_id: model declares index=True but create_all won't add it
+    # to an already-existing table — ensure it for the per-org role list/lookup.
+    ("ix rbac_roles.organisation_id",
+     "CREATE INDEX IF NOT EXISTS ix_rbac_roles_org ON rbac_roles (organisation_id)"),
+    # Role-filtered staff list + count_role_users both filter rbac_role_id on live rows.
+    ("ix members.rbac_role_id (active)",
+     "CREATE INDEX IF NOT EXISTS ix_members_rbac_role_active "
+     "ON members (rbac_role_id) WHERE is_deleted = false"),
 ]

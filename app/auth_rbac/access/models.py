@@ -5,7 +5,7 @@ rbac_roles, SET NULL); database_compare/migrations.py owns its index + the
 idempotent ALTER for already-existing databases.
 """
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, UniqueConstraint, Index, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from ...models.base import Base
 
@@ -20,6 +20,10 @@ class RbacRole(Base):
     description = Column(String(255), nullable=True)
     is_default = Column(Boolean, default=False, nullable=False)  # auto-assigned to new users of this type
     created_by = Column(UUID(as_uuid=True), nullable=True)
+    # Admin-defined extra fields collected when adding a user to this role (grade,
+    # parent name, address, ...). A JSON list of {key,label,type,required,options}.
+    # Filled values live on members.profile['custom_fields']. See access/custom_fields.py.
+    custom_fields = Column(JSONB, nullable=False, default=list, server_default="[]")
 
     __table_args__ = (
         UniqueConstraint("organisation_id", "user_type", "role_key", name="uq_rbac_role_organisation_type_key"),

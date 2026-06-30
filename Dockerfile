@@ -77,9 +77,13 @@ USER app
 # Expose port
 EXPOSE 8000
 
-# Health check - updated path
+# Health check - honours $PORT (Railway/most PaaS inject it)
 HEALTHCHECK --interval=30s --timeout=30s --start-period=15s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
+  CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-# Production command - optimized for 100k users
-CMD ["gunicorn", "app.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload"]
+# Production command. SHELL form (not exec/JSON) so $PORT expands. On Railway the
+# railway.json startCommand (railway-start.sh) overrides this and ALSO runs the
+# migration first; this CMD is the fallback for a plain `docker run`.
+CMD gunicorn app.main:app -w ${WEB_CONCURRENCY:-4} -k uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:${PORT:-8000} --max-requests 1000 --max-requests-jitter 100 \
+    --preload --timeout 120

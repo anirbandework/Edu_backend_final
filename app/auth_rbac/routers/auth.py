@@ -24,7 +24,7 @@ from ...core.database import get_db
 from ...core.rate_limit import rate_limiter
 from ...core.config import settings
 from ..services.auth_service import AuthService
-from ..services import login_service, invitation_service, signup_service
+from ..services import login_service, phone_service, signup_service
 from ...authority_management.models.authority import Authority
 from ...organisation_management.services.organisation_service import OrganisationService
 from ...organisation_management.schemas.organisation_schemas import OrganisationCreate, OrganisationUpdate
@@ -353,7 +353,7 @@ async def create_admin(
     is optional; the admin creates their organisation(s) after first login."""
     if not body.phone.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Phone is required.")
-    await invitation_service.assert_phone_available(db, body.phone)
+    await phone_service.assert_phone_available(db, body.phone)
 
     # Create the admin password-less (status='invited'); the granted pages are stored
     # now. They set their own password at first login (phone + OTP) — no link needed.
@@ -464,7 +464,7 @@ async def update_admin(
     """Edit an admin's name / phone / email."""
     sa = await _load_admin(db, admin_id)
     if body.phone is not None and body.phone.strip() and body.phone.strip() != sa.phone:
-        await invitation_service.assert_phone_available(db, body.phone, exclude_user_id=str(sa.id))
+        await phone_service.assert_phone_available(db, body.phone, exclude_user_id=str(sa.id))
         sa.phone = body.phone.strip()
     if body.first_name is not None:
         sa.first_name = body.first_name.strip()

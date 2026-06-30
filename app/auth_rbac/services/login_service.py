@@ -95,6 +95,12 @@ async def authenticate(
                 # e.g. 'invited' — a password exists but first-login isn't complete;
                 # don't log in (preserves the prior behaviour for non-active accounts).
                 continue
+            # Invariant: an active STAFF member must hold a role. A role-less member
+            # (orphaned by a role deletion) has no page grants — block the login rather
+            # than issue a useless, confusing token. (Authorities are role-independent.)
+            if role == ROLE_STAFF and getattr(user, "rbac_role_id", None) is None:
+                raise AccountInactiveError(
+                    "Your account isn't assigned to a role yet. Please contact your administrator.")
             org_id = str(user.organisation_id) if getattr(user, "organisation_id", None) else None
             grp_id = str(user.group_id) if getattr(user, "group_id", None) else None
             # Organisation / institution-group deactivation gate (clear message).

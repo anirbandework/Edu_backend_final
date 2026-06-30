@@ -1,7 +1,10 @@
 # app/core/config.py
 """Application configuration using Pydantic."""
-from pydantic_settings import BaseSettings
-from typing import List
+import json
+from typing import Annotated, List
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode
 
 class Settings(BaseSettings):
     database_url: str
@@ -12,11 +15,39 @@ class Settings(BaseSettings):
     environment: str = 'development'
     log_level: str = 'info'
     # SECURITY: lock CORS down to known origins in production. '*' only for local dev.
-    allowed_origins: List[str] = [
+    # NoDecode: parse the env value ourselves (accept JSON array OR comma-separated).
+    allowed_origins: Annotated[List[str], NoDecode] = [
         'http://localhost:8550',
         'http://localhost:3000',
         'http://127.0.0.1:8550',
     ]
+
+    @field_validator('database_url', mode='before')
+    @classmethod
+    def _normalize_db_url(cls, v):
+        """Railway/Heroku inject 'postgresql://' (or 'postgres://'); the async engine
+        needs the asyncpg driver. Normalise so the platform-provided URL works as-is."""
+        if isinstance(v, str):
+            if v.startswith('postgresql+'):
+                return v  # already has an explicit driver
+            if v.startswith('postgres://'):
+                return 'postgresql+asyncpg://' + v[len('postgres://'):]
+            if v.startswith('postgresql://'):
+                return 'postgresql+asyncpg://' + v[len('postgresql://'):]
+        return v
+
+    @field_validator('allowed_origins', mode='before')
+    @classmethod
+    def _parse_origins(cls, v):
+        """Accept a JSON array, a comma-separated string, or a list (env-friendly)."""
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith('['):
+                return json.loads(v)
+            return [o.strip() for o in v.split(',') if o.strip()]
+        return v
 
     # --- JWT / auth ---
     jwt_algorithm: str = 'HS256'

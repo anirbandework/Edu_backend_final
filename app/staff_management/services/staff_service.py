@@ -15,7 +15,7 @@ from ...auth_rbac.access.models import RbacRole
 
 
 def _gen_staff_id() -> str:
-    return "STF-" + uuid.uuid4().hex[:6].upper()
+    return "STF-" + uuid.uuid4().hex[:12].upper()  # 48 bits — collision-safe for bulk imports
 
 
 class StaffService:
@@ -72,8 +72,8 @@ class StaffService:
         }
 
     @staticmethod
-    def _serialize(s: Member, role_names: dict) -> dict:
-        return {
+    def _serialize(s: Member, role_names: dict, *, include_custom: bool = False) -> dict:
+        out = {
             "id": str(s.id),
             "staff_id": s.staff_id,
             "first_name": s.first_name,
@@ -88,6 +88,11 @@ class StaffService:
             "has_login": bool(s.password_hash),
             "created_at": s.created_at.isoformat() if s.created_at else None,
         }
+        # Custom-field VALUES (parent phone, address, ...) are PII and can be bulky, so
+        # they ride only on the single-member detail fetch — never on the list payload.
+        if include_custom:
+            out["custom_fields"] = (s.profile or {}).get("custom_fields") or {}
+        return out
 
     @staticmethod
     async def get(db: AsyncSession, staff_id, organisation_id) -> Optional[Member]:
@@ -119,7 +124,7 @@ class StaffService:
     @staticmethod
     async def create(
         db: AsyncSession, *, organisation_id, rbac_role_id, first_name, last_name, phone,
-        password=None, email=None, position=None, created_by=None,
+        password=None, email=None, position=None, created_by=None, custom_values=None,
     ) -> Member:
         phone = (phone or "").strip()
         if not phone:
@@ -141,6 +146,8 @@ class StaffService:
             status="active" if password else "invited",
             role="staff",
             created_by=created_by,
+            # Role-specific custom field values (grade, parent name, ...) live in profile.
+            profile={"custom_fields": custom_values} if custom_values else None,
         )
         db.add(staff)
         try:
@@ -154,7 +161,22 @@ class StaffService:
 
     @staticmethod
     async def update(db: AsyncSession, staff: Member, *, first_name=None, last_name=None,
-                     email=None, phone=None, position=None, rbac_role_id=None) -> Member:
+                     email=None, phone=None, position=None, rbac_role_id=None,
+                     custom_values=None) -> Member:
+        # Is the role actually changing? (used for orphaned-value cleanup below)
+        role_changing = rbac_role_id is not None and (rbac_role_id or None) != staff.rbac_role_id
+        if custom_values is not None:
+            # Reassign the whole dict so SQLAlchemy flags the JSON column dirty.
+            prof = dict(staff.profile or {})
+            prof["custom_fields"] = custom_values
+            staff.profile = prof
+        elif role_changing and (staff.profile or {}).get("custom_fields"):
+            # Role changed without new values supplied → drop the OLD role's field
+            # values. They belong to a different role's fields; retaining them is stale
+            # PII (and would never be shown, since display reads the new role's defs).
+            prof = dict(staff.profile or {})
+            prof["custom_fields"] = {}
+            staff.profile = prof
         if phone is not None:
             phone = phone.strip()
             if phone and phone != staff.phone and await StaffService._phone_taken(db, phone, exclude_id=staff.id):
@@ -169,7 +191,13 @@ class StaffService:
         if position is not None:
             staff.position = position or None
         if rbac_role_id is not None:
-            staff.rbac_role_id = rbac_role_id or None
+            new_role = rbac_role_id or None
+            # Recover an ORPHANED user: one left role-less + deactivated when their role
+            # was deleted. Giving them a role again restores login — active if they have a
+            # password, else 'invited' so they can still complete first-login (phone + OTP).
+            if new_role and staff.rbac_role_id is None and staff.status == "inactive":
+                staff.status = "active" if staff.password_hash else "invited"
+            staff.rbac_role_id = new_role
         try:
             await db.commit()
         except IntegrityError:
@@ -180,7 +208,18 @@ class StaffService:
 
     @staticmethod
     async def set_status(db: AsyncSession, staff: Member, active: bool) -> Member:
+        # An active user must hold a role. A role-less user (orphaned by a role deletion)
+        # can only be brought back by ASSIGNING a role, which re-activates them — not by
+        # flipping status alone.
+        if active and staff.rbac_role_id is None:
+            raise ValueError("Assign a role to this user before activating them.")
         staff.status = "active" if active else "inactive"
+        if not active:
+            # Deactivation must kill live tokens too — the per-request check enforces
+            # sessions_invalidated_at, not status, so without this a just-deactivated
+            # user keeps a working access token until it expires.
+            from ...auth_rbac.security.sessions import invalidate_sessions
+            await invalidate_sessions(db, "staff", staff.id)
         await db.commit()
         await db.refresh(staff)
         return staff

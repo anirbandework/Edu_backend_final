@@ -145,13 +145,15 @@ class RBACService:
         return (await db.execute(stmt.order_by(RbacRole.user_type, RbacRole.role_name))).scalars().all()
 
     @staticmethod
-    async def create_role(db, *, organisation_id, user_type, role_name, description=None, is_default=False, created_by=None):
+    async def create_role(db, *, organisation_id, user_type, role_name, description=None,
+                          is_default=False, created_by=None, custom_fields=None):
         if user_type not in catalog.ROLE_USER_TYPES:
             raise ValueError(f"invalid user_type {user_type}")
+        from . import custom_fields as cf
         role = RbacRole(
             organisation_id=organisation_id, user_type=user_type, role_name=role_name,
             role_key=_slug(role_name), description=description, is_default=is_default,
-            created_by=created_by,
+            created_by=created_by, custom_fields=cf.normalize_definitions(custom_fields),
         )
         db.add(role)
         try:
@@ -184,7 +186,8 @@ class RBACService:
         return (await db.execute(stmt)).scalar_one_or_none()
 
     @staticmethod
-    async def update_role(db, role_id, *, role_name=None, description=None, is_default=None):
+    async def update_role(db, role_id, *, role_name=None, description=None, is_default=None,
+                          custom_fields=None):
         role = await RBACService.get_role(db, role_id)
         if not role:
             return None
@@ -193,6 +196,9 @@ class RBACService:
             role.role_key = _slug(role_name)
         if description is not None:
             role.description = description
+        if custom_fields is not None:
+            from . import custom_fields as cf
+            role.custom_fields = cf.normalize_definitions(custom_fields)
         if is_default is not None:
             role.is_default = is_default
             if is_default:
@@ -203,16 +209,60 @@ class RBACService:
         return role
 
     @staticmethod
-    async def delete_role(db, role_id) -> bool:
+    async def count_role_users(db, role_id) -> int:
+        """How many (non-deleted) members currently hold this role."""
+        row = await db.execute(
+            text("SELECT count(*) FROM members WHERE rbac_role_id = :rid AND is_deleted = false"),
+            {"rid": str(role_id)})
+        return int(row.scalar() or 0)
+
+    @staticmethod
+    async def delete_role(db, role_id, *, reassign_to_role_id=None) -> bool:
+        """Hard-delete a role. Its members are EITHER moved to ``reassign_to_role_id``
+        (keeping their login) OR — when no replacement is given — left role-less AND
+        DEACTIVATED, so they cannot log in until an admin gives them a new role.
+        Permission rows cascade away; the (org,type,key) name frees up for reuse."""
         role = await RBACService.get_role(db, role_id)
         if not role:
             return False
-        # Unassign users pointing at this role (they fall back to the deny-list
-        # defaults), then hard-delete so its permission rows cascade away and the
-        # (organisation,type,key) name can be reused.
-        for tbl in ("authorities", "members"):
-            await db.execute(text(f"UPDATE {tbl} SET rbac_role_id = NULL WHERE rbac_role_id = :rid"),
-                             {"rid": str(role.id)})
+
+        target_id = None
+        if reassign_to_role_id:
+            if str(reassign_to_role_id) == str(role.id):
+                raise ValueError("Cannot reassign users to the role being deleted.")
+            target = await RBACService.get_role(db, reassign_to_role_id)
+            if not target or str(target.organisation_id) != str(role.organisation_id):
+                raise ValueError("Invalid role to reassign users to.")
+            if target.user_type != "staff":
+                raise ValueError("Users can only be reassigned to a staff role.")
+            target_id = str(target.id)
+
+        if target_id:
+            # Move members to the replacement role; they keep their status + login.
+            await db.execute(
+                text("UPDATE members SET rbac_role_id = :new "
+                     "WHERE rbac_role_id = :old AND is_deleted = false"),
+                {"new": target_id, "old": str(role.id)})
+        else:
+            # Leave unassigned: clear the role AND deactivate so they can't log in
+            # until reassigned (re-activated when an admin assigns them a new role).
+            # Stamp sessions_invalidated_at so existing access/refresh tokens die too
+            # (the per-request check enforces that timestamp, not status). Done in one
+            # bulk UPDATE so it stays cheap even for a role held by thousands of members
+            # (their Redis siat cache self-heals within its 300s TTL via DB fallback).
+            await db.execute(
+                text("UPDATE members SET rbac_role_id = NULL, status = 'inactive', "
+                     "sessions_invalidated_at = now(), "
+                     # Drop the deleted role's custom-field values too — stale role-specific
+                     # PII shouldn't linger on an orphaned account.
+                     "profile = (profile::jsonb - 'custom_fields')::json "
+                     "WHERE rbac_role_id = :old AND is_deleted = false"),
+                {"old": str(role.id)})
+        # Authorities (admins) should never hold a staff role — null defensively, no deactivation.
+        await db.execute(
+            text("UPDATE authorities SET rbac_role_id = NULL WHERE rbac_role_id = :old"),
+            {"old": str(role.id)})
+
         await db.delete(role)
         await db.commit()
         return True

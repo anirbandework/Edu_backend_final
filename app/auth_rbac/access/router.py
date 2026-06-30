@@ -30,6 +30,7 @@ class RoleCreate(BaseModel):
     is_default: bool = False
     modules: Optional[List[str]] = None              # cross-section page grants
     creatable_role_ids: Optional[List[str]] = None   # delegated user-creation
+    custom_fields: Optional[List[dict]] = None       # admin-defined per-role fields
 
 
 class RoleUpdate(BaseModel):
@@ -38,6 +39,7 @@ class RoleUpdate(BaseModel):
     is_default: Optional[bool] = None
     modules: Optional[List[str]] = None
     creatable_role_ids: Optional[List[str]] = None
+    custom_fields: Optional[List[dict]] = None
 
 
 class ModuleToggle(BaseModel):
@@ -223,6 +225,7 @@ async def create_role(
             db, organisation_id=_role_organisation(principal), user_type=body.user_type,
             role_name=body.role_name, description=body.description,
             is_default=body.is_default, created_by=principal.user_uuid,
+            custom_fields=body.custom_fields,
         )
         # The bulk allow-list write is the dynamic-staff path (no organisation ceiling).
         # Legacy teacher/student/authority roles must use the ceiling-checked
@@ -250,8 +253,12 @@ async def update_role(role_id: str, body: RoleUpdate,
                       principal: Principal = Depends(require_authority),
                       db: AsyncSession = Depends(get_db)):
     role = await _load_owned_role(db, principal, role_id)
-    role = await RBACService.update_role(db, role_id, role_name=body.role_name,
-                                         description=body.description, is_default=body.is_default)
+    try:
+        role = await RBACService.update_role(db, role_id, role_name=body.role_name,
+                                             description=body.description, is_default=body.is_default,
+                                             custom_fields=body.custom_fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if body.modules is not None and role.user_type == catalog.STAFF:
         await RBACService.set_role_modules(db, role, body.modules, by=_actor(principal))
     if body.creatable_role_ids is not None:
@@ -259,11 +266,28 @@ async def update_role(role_id: str, body: RoleUpdate,
     return {"id": str(role.id), "role_name": role.role_name}
 
 
+@router.get("/roles/{role_id}/usage")
+async def role_usage(role_id: str, principal: Principal = Depends(require_authority),
+                     db: AsyncSession = Depends(get_db)):
+    """How many users currently hold this role — powers the delete-impact prompt."""
+    role = await _load_owned_role(db, principal, role_id)
+    return {"user_count": await RBACService.count_role_users(db, role.id)}
+
+
 @router.delete("/roles/{role_id}")
-async def delete_role(role_id: str, principal: Principal = Depends(require_authority),
+async def delete_role(role_id: str, reassign_to: str = "",
+                      principal: Principal = Depends(require_authority),
                       db: AsyncSession = Depends(get_db)):
+    """Delete a role. ``reassign_to`` (optional role id) moves its members there;
+    omitted → its members are left unassigned AND deactivated until reassigned."""
     await _load_owned_role(db, principal, role_id)
-    await RBACService.delete_role(db, role_id)
+    # If reassigning, the target must be one the admin owns too.
+    if reassign_to:
+        await _load_owned_role(db, principal, reassign_to)
+    try:
+        await RBACService.delete_role(db, role_id, reassign_to_role_id=reassign_to or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"detail": "deleted"}
 
 
@@ -277,6 +301,7 @@ async def role_detail(role_id: str, principal: Principal = Depends(require_autho
         "description": role.description, "is_default": role.is_default,
         "modules": await RBACService.get_role_module_keys(db, role.id),
         "creatable_role_ids": await RBACService.get_creatable_role_ids(db, role.id),
+        "custom_fields": role.custom_fields or [],
     }
 
 
@@ -294,7 +319,8 @@ async def assignable_roles(
         return []
     if principal.is_authority or principal.is_super_admin:
         roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
-        return [{"id": str(r.id), "role_name": r.role_name, "description": r.description}
+        return [{"id": str(r.id), "role_name": r.role_name, "description": r.description,
+                 "custom_fields": r.custom_fields or []}
                 for r in roles]
     if principal.role == "staff":
         role_id = await resolve_role_id(db, "staff", principal.user_id)
@@ -309,7 +335,8 @@ async def assignable_roles(
         if not has_staff_page:
             return []
         roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
-        return [{"id": str(r.id), "role_name": r.role_name, "description": r.description}
+        return [{"id": str(r.id), "role_name": r.role_name, "description": r.description,
+                 "custom_fields": r.custom_fields or []}
                 for r in roles]
     return []
 

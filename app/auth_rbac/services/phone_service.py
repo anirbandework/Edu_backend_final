@@ -1,10 +1,9 @@
 """Phone-uniqueness guard for onboarding.
 
-The old invitation / signup-link system (one-time tokens, invite roles) was REMOVED:
-onboarding is now password-less first-login (phone + OTP, no links). The only piece
-that survived is the phone-availability check below, used when the super-admin creates
-an admin or resets an admin's password. (Kept in this module to avoid churning the
-`invitation_service.assert_phone_available` import sites.)
+Phone is the login id, so it must be unique across every identity table. This single
+check is used wherever a user is created (super-admin creating an admin, admin reset,
+bulk import). (Formerly `invitation_service` — the invitation/signup-link system was
+removed; onboarding is now password-less first-login via phone + OTP.)
 """
 from __future__ import annotations
 from typing import Optional
