@@ -9,9 +9,14 @@ from ..core.database import get_db, health_check_db  # Removed test_connection i
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/health", tags=["Health"])
 
+# NOTE: two paths on purpose. Starlette has redirect_slashes=True, so a request to
+# "/health" (no trailing slash) 307-redirects to "/health/". Railway's healthcheck does
+# NOT follow redirects and treats the 3xx as a failure ("service unavailable"). Registering
+# the exact "" path makes "/health" return 200 directly, so the probe passes.
+@router.get("")
 @router.get("/")
 async def health_check():
-    """Basic health check"""
+    """Basic health check (served at both /health and /health/)."""
     return {
         "status": "healthy",
         "service": "EduAssist API",
