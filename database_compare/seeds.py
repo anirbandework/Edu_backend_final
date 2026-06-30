@@ -1,7 +1,7 @@
 """Idempotent data seeds (sync). Safe to re-run.
 
 - seed_super_admin: the platform super-admin, from .env (SUPER_ADMIN_*).
-- seed_default_roles: one default RBAC role per (tenant, user_type) + assign roleless users.
+- seed_default_roles: one default RBAC role per (organisation, user_type) + assign roleless users.
 - seed_dev_passwords: dev/local only — set a default password on users that have none.
 """
 import uuid
@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.auth_rbac.security.password import hash_password
 
 _SEED_ROLES = [
-    ("school_authority", "school_authorities", "Administrator", "administrator"),
+    ("authority", "authorities", "Administrator", "administrator"),
     # teachers/students removed — those tables were dropped in the legacy teardown.
     # Non-admin users are now `members` (created via /api/staff with their own password).
 ]
@@ -37,24 +37,24 @@ def seed_super_admin(conn) -> str:
 
 
 def seed_default_roles(conn) -> str:
-    tenant_ids = [str(r[0]) for r in conn.execute(text("SELECT id FROM tenants WHERE is_deleted = false")).fetchall()]
+    organisation_ids = [str(r[0]) for r in conn.execute(text("SELECT id FROM organisations WHERE is_deleted = false")).fetchall()]
     roles = assigned = 0
-    for tid in tenant_ids:
+    for tid in organisation_ids:
         for user_type, tbl, role_name, role_key in _SEED_ROLES:
             existing = conn.execute(text(
-                "SELECT id FROM rbac_roles WHERE tenant_id=:t AND user_type=:u AND role_key=:k AND is_deleted=false"
+                "SELECT id FROM rbac_roles WHERE organisation_id=:t AND user_type=:u AND role_key=:k AND is_deleted=false"
             ), {"t": tid, "u": user_type, "k": role_key}).first()
             if existing:
                 role_id = str(existing[0])
             else:
                 role_id = str(uuid.uuid4())
                 conn.execute(text(
-                    "INSERT INTO rbac_roles (id, tenant_id, role_name, role_key, user_type, is_default, is_deleted) "
+                    "INSERT INTO rbac_roles (id, organisation_id, role_name, role_key, user_type, is_default, is_deleted) "
                     "VALUES (:id,:t,:n,:k,:u,true,false)"
                 ), {"id": role_id, "t": tid, "n": role_name, "k": role_key, "u": user_type})
                 roles += 1
             res = conn.execute(text(
-                f"UPDATE {tbl} SET rbac_role_id=:rid WHERE tenant_id=:t AND rbac_role_id IS NULL"
+                f"UPDATE {tbl} SET rbac_role_id=:rid WHERE organisation_id=:t AND rbac_role_id IS NULL"
             ), {"rid": role_id, "t": tid})
             assigned += res.rowcount or 0
     return f"  + default roles: created {roles}, assigned {assigned} users"

@@ -15,9 +15,9 @@ docker-compose up -d --build
 echo "Waiting for database to be ready..."
 sleep 10
 
-# Create tables
+# Create tables + run migrations + seeds
 echo "Creating database tables..."
-docker-compose exec api python create_tables.py
+docker-compose exec api python -m database_compare.run_local_migration
 
 echo "Setup complete! Services running:"
 echo "- API: http://localhost:8000"

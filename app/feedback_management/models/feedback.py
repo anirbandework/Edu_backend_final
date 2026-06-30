@@ -1,6 +1,6 @@
 # app/feedback_management/models/feedback.py
 """Feedback submitted by any user (student/teacher/admin/super-admin). Read and
-triaged by the super-admin. user_id/tenant_id are plain UUIDs (no FK — the
+triaged by the super-admin. user_id/organisation_id are plain UUIDs (no FK — the
 submitter can live in any of several identity tables)."""
 from sqlalchemy import Column, String, Text, Integer
 from sqlalchemy.dialects.postgresql import UUID
@@ -11,7 +11,7 @@ from ...models.base import Base
 class Feedback(Base):
     __tablename__ = "feedback"
 
-    tenant_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    organisation_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     user_type = Column(String(30), nullable=False)   # the submitter's role
     user_name = Column(String(120), nullable=True)

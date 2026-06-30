@@ -39,7 +39,7 @@ def _dict(f: Feedback) -> dict:
         "user_type": f.user_type,
         "user_name": f.user_name,
         "user_phone": f.user_phone,
-        "tenant_id": str(f.tenant_id) if f.tenant_id else None,
+        "organisation_id": str(f.organisation_id) if f.organisation_id else None,
         "feedback_type": f.feedback_type,
         "rating": f.rating,
         "title": f.title,
@@ -69,7 +69,7 @@ async def submit_feedback(
     ftype = body.feedback_type if body.feedback_type in _TYPES else "other"
     rating = body.rating if (body.rating is not None and 1 <= body.rating <= 5) else None
     fb = Feedback(
-        tenant_id=_uuid_or_none(principal.tenant_id),
+        organisation_id=_uuid_or_none(principal.organisation_id),
         user_id=_uuid_or_none(principal.user_id),
         user_type=principal.role,
         user_name=(body.user_name or "").strip() or None,

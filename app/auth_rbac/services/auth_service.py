@@ -3,14 +3,14 @@
 Identity-only: returns the user's own record across the three identity tables.
 Module/tab permissions are served separately by /api/access/my-permissions, so this
 no longer depends on the retired page-based RBAC tables (Role/UserRole/PagePermission/
-TenantPageAccess).
+OrganisationPageAccess).
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
 from uuid import UUID
 
-from ...school_authority_management.models.school_authority import SchoolAuthority
+from ...authority_management.models.authority import Authority
 from ...staff_management.models.member import Member
 
 
@@ -27,7 +27,7 @@ class AuthService:
         from ..models.super_admin import SuperAdmin
         model = {
             "super_admin": SuperAdmin,
-            "school_authority": SchoolAuthority,
+            "authority": Authority,
             "staff": Member,
         }.get(role)
         if not model:
@@ -35,10 +35,10 @@ class AuthService:
         return (await db.execute(select(model).where(model.id == user_id))).scalar_one_or_none()
 
     @staticmethod
-    async def get_user_profile(db: AsyncSession, user_id: UUID, tenant_id: UUID = None) -> Optional[dict]:
+    async def get_user_profile(db: AsyncSession, user_id: UUID, organisation_id: UUID = None) -> Optional[dict]:
         """Return the identity profile for a user, searching every identity table
-        (super-admin, school authority, staff, teacher, student)."""
-        # Super-admin (platform owner; no tenant)
+        (super-admin, authority, staff, teacher, student)."""
+        # Super-admin (platform owner; no organisation)
         from ..models.super_admin import SuperAdmin
         sa = (await db.execute(select(SuperAdmin).where(SuperAdmin.id == user_id))).scalar_one_or_none()
         if sa:
@@ -52,13 +52,13 @@ class AuthService:
                 "phone": sa.phone,
                 "status": getattr(sa, "status", "active"),
                 "last_login": _iso(getattr(sa, "last_login", None)),
-                "tenant_id": None,
+                "organisation_id": None,
             }
 
         # Unified dynamic-role staff
         q = select(Member).where(Member.id == user_id)
-        if tenant_id:
-            q = q.where(Member.tenant_id == tenant_id)
+        if organisation_id:
+            q = q.where(Member.organisation_id == organisation_id)
         staff = (await db.execute(q)).scalar_one_or_none()
         if staff:
             return {
@@ -76,18 +76,18 @@ class AuthService:
                 "position": staff.position,
                 "status": staff.status,
                 "last_login": _iso(staff.last_login),
-                "tenant_id": str(staff.tenant_id) if staff.tenant_id else None,
+                "organisation_id": str(staff.organisation_id) if staff.organisation_id else None,
             }
 
-        # School authority
-        q = select(SchoolAuthority).where(SchoolAuthority.id == user_id)
-        if tenant_id:
-            q = q.where(SchoolAuthority.tenant_id == tenant_id)
+        # Organisation authority
+        q = select(Authority).where(Authority.id == user_id)
+        if organisation_id:
+            q = q.where(Authority.organisation_id == organisation_id)
         auth = (await db.execute(q)).scalar_one_or_none()
         if auth:
             return {
                 "user_id": str(auth.id),
-                "user_type": "SCHOOL_AUTHORITY",
+                "user_type": "AUTHORITY",
                 "role": "admin",  # for frontend navigation
                 "authority_id": auth.authority_id,
                 "first_name": auth.first_name,
@@ -104,17 +104,17 @@ class AuthService:
                 "status": auth.status,
                 "authority_details": auth.authority_details,
                 "permissions": auth.permissions,
-                "school_overview": auth.school_overview,
+                "org_overview": auth.org_overview,
                 "contact_info": auth.contact_info,
                 "last_login": _iso(auth.last_login),
-                "tenant_id": str(auth.tenant_id),
+                "organisation_id": str(auth.organisation_id),
             }
 
         # Any non-authority user is a Member (dynamic model). profile.category marks a
         # "student" member; legacy teacher/student extras live in members.profile JSON.
         q = select(Member).where(Member.id == user_id)
-        if tenant_id:
-            q = q.where(Member.tenant_id == tenant_id)
+        if organisation_id:
+            q = q.where(Member.organisation_id == organisation_id)
         member = (await db.execute(q)).scalar_one_or_none()
         if member:
             prof = member.profile or {}
@@ -144,7 +144,7 @@ class AuthService:
                 "parent_info": prof.get("parent_info"),
                 "profile": prof,
                 "last_login": _iso(member.last_login),
-                "tenant_id": str(member.tenant_id),
+                "organisation_id": str(member.organisation_id),
             }
 
         return None

@@ -5,12 +5,12 @@ from typing import Optional
 import uuid
 
 ROLE_SUPER_ADMIN = "super_admin"
-ROLE_AUTHORITY = "school_authority"
+ROLE_AUTHORITY = "authority"
 # Unified dynamic-role staff (faculty / principal / HOD / office / ...). Their
 # real permissions come from the rbac_role assigned to them, NOT a coarse bucket.
 ROLE_STAFF = "staff"
 
-# Roles considered "staff" (may manage tenant-scoped resources via the coarse
+# Roles considered "staff" (may manage organisation-scoped resources via the coarse
 # is_staff/require_staff checks). NOTE: ROLE_STAFF is deliberately EXCLUDED — a
 # dynamic-role user's access is page-driven (require_module_access / their
 # rbac_role's grants), never the blanket is_staff property. Including it here
@@ -25,7 +25,10 @@ class Principal:
     other than a verified token."""
     user_id: str
     role: str
-    tenant_id: Optional[str]
+    organisation_id: Optional[str]
+    # The institution group (set for an admin). Staff resolve their group from
+    # their organisation; super-admins have none.
+    group_id: Optional[str] = None
     jti: Optional[str] = None
 
     @property
@@ -47,11 +50,11 @@ class Principal:
         return self.role in STAFF_ROLES
 
     @property
-    def tenant_uuid(self) -> Optional[uuid.UUID]:
-        if not self.tenant_id:
+    def organisation_uuid(self) -> Optional[uuid.UUID]:
+        if not self.organisation_id:
             return None
         try:
-            return uuid.UUID(str(self.tenant_id))
+            return uuid.UUID(str(self.organisation_id))
         except (ValueError, TypeError):
             return None
 
@@ -62,10 +65,19 @@ class Principal:
         except (ValueError, TypeError):
             return None
 
-    def can_access_tenant(self, tenant_id) -> bool:
-        """Super admins can act across tenants; everyone else is locked to their own."""
+    @property
+    def group_uuid(self) -> Optional[uuid.UUID]:
+        if not self.group_id:
+            return None
+        try:
+            return uuid.UUID(str(self.group_id))
+        except (ValueError, TypeError):
+            return None
+
+    def can_access_organisation(self, organisation_id) -> bool:
+        """Super admins can act across organisations; everyone else is locked to their own."""
         if self.is_super_admin:
             return True
-        if tenant_id is None:
+        if organisation_id is None:
             return False
-        return str(tenant_id) == str(self.tenant_id)
+        return str(organisation_id) == str(self.organisation_id)

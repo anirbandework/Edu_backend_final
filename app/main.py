@@ -17,18 +17,8 @@ from .core.config import settings
 from .core.database import engine, background_engine, close_db_connections, get_pool_status
 from .core.cache import cache_service
 from .routers.health import router as health_router
-from .tenant_management.routers.tenant import router as tenant_router
-from .school_authority_management.routers.school_authority import router as school_authority_router
-from .student_management.routers.student import router as student_router
-from .class_management.routers.class_management import router as class_router
-from .enrollment_management.routers.enrollment import router as enrollment_router
-from .notification_management.routers.notifications import router as notifications_router
-from .attendance_management.routers.attendance import router as attendance_router
-from .timetable_management.routers.timetable import router as timetable_router
-from .chat_management.routers.chat_router import router as chat_router
-from .chat_management.routers.websocket_router import router as websocket_router
-from .assessment_management.routers import assessment_router
-from .exam_management.routers.exam_management import router as exam_router
+from .organisation_management.routers.organisation import router as organisation_router
+from .authority_management.routers.authority import router as authority_router
 from .feedback_management.routers.feedback import router as feedback_router
 from .staff_management.routers.staff import router as staff_router
 from .auth_rbac.routers.auth import router as auth_router
@@ -39,11 +29,13 @@ from .auth_rbac.models.super_admin import SuperAdmin  # noqa: F401
 # Eager import so create_all builds members + role_creatable_roles.
 from .staff_management.models.member import Member  # noqa: F401
 from .auth_rbac.access.models import RoleCreatableRole  # noqa: F401
+# Institution group (top-level grouping above organisations).
+from .group_management.models.group import InstitutionGroup  # noqa: F401
 from .models.base import Base
 # NOTE: the legacy page-based access routers (user_role, user_access, role_management,
 # page_permissions, rbac_management, super_admin grant-pages) are retired — superseded
 # by the module/tab system at /api/access. The frontend used none of them. Their model
-# classes are still imported via auth_service, so the Tenant mapper stays intact until
+# classes are still imported via auth_service, so the Organisation mapper stays intact until
 # the Phase-2 cleanup removes the dead models/services/relationships.
 from .core.exceptions import eduassist_exception_handler, general_exception_handler, EduAssistException
 
@@ -121,13 +113,19 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown complete")
 
 
-# Create FastAPI app with enhanced lifespan
+# Create FastAPI app with enhanced lifespan.
+# Hide the interactive API docs / OpenAPI schema in production so the full endpoint
+# surface (and request/response shapes) isn't published to anonymous visitors.
+_docs_enabled = not settings.is_production
 app = FastAPI(
     title="EduAssist Backend API",
     description="Educational Management Platform API with Bulk Operations Support",
     version=settings.app_version,
     lifespan=lifespan,
-    servers=[{"url": "http://localhost:8000"}]
+    servers=[{"url": "http://localhost:8000"}],
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 # Global exception handler to preserve HTTP status codes
@@ -216,8 +214,8 @@ app.add_middleware(CORSMiddleware, **_cors_kwargs)
 # --- Authorization wiring ---------------------------------------------------
 # Every resource router now requires a valid access token (AUTHED). Platform-admin
 # routers require super-admin (SUPERADMIN). Public surface is deliberately tiny:
-# only health and the auth endpoints (auth_router exposes GET /api/auth/schools as
-# the public login-picker list). The tenant router is fully super-admin gated.
+# only health and the auth endpoints (auth_router exposes GET /api/auth/organisations as
+# the public login-picker list). The organisation router is fully super-admin gated.
 from .auth_rbac.security.deps import get_current_principal, require_super_admin
 AUTHED = [Depends(get_current_principal)]
 SUPERADMIN = [Depends(require_super_admin)]
@@ -226,28 +224,18 @@ SUPERADMIN = [Depends(require_super_admin)]
 app.include_router(health_router)
 app.include_router(auth_router)
 
-# Platform administration — super-admin only (school CRUD, financials, bulk, hard-delete)
-app.include_router(tenant_router, dependencies=SUPERADMIN)
+# Platform administration — super-admin only (organisation CRUD, financials, bulk, hard-delete)
+app.include_router(organisation_router, dependencies=SUPERADMIN)
 
 # Authenticated resource routers
-app.include_router(school_authority_router, dependencies=AUTHED)
-app.include_router(student_router, dependencies=AUTHED)
-app.include_router(class_router, dependencies=AUTHED)
-app.include_router(enrollment_router, dependencies=AUTHED)
-app.include_router(notifications_router, dependencies=AUTHED)
-app.include_router(attendance_router, dependencies=AUTHED)
-app.include_router(timetable_router, dependencies=AUTHED)
-app.include_router(chat_router, dependencies=AUTHED)
-app.include_router(websocket_router)  # auth via ?token= JWT handshake (see websocket_router)
-app.include_router(assessment_router, dependencies=AUTHED)
-app.include_router(exam_router, dependencies=AUTHED)
+app.include_router(authority_router, dependencies=AUTHED)
 # Feedback: submit is open to any authed user; listing/triage is super-admin
 # (gated per-route inside the router).
 app.include_router(feedback_router, dependencies=AUTHED)
 app.include_router(staff_router, dependencies=AUTHED)
 
 # Access control — module/tab RBAC (indusinfotechs-style): my-permissions + role
-# mgmt + tenant config. Per-route auth inside the router. This is the ONLY
+# mgmt + organisation config. Per-route auth inside the router. This is the ONLY
 # access-control surface; the legacy page-based routers were retired (see import note).
 app.include_router(access_rbac_router)
 
@@ -261,8 +249,8 @@ async def root():
         "message": "EduAssist Backend API",
         "version": settings.app_version,
         "features": [
-            "Tenant Management",
-            "School Authority Management",
+            "Organisation Management",
+            "Authority Management",
             "Assessment System",
             "AI-Powered Learning Analytics",
             "Connection Pooling",
@@ -289,8 +277,8 @@ async def system_status():
         "environment": settings.environment,
         "database_pools": pool_status,
         "features": {
-            "tenant_management": True,
-            "school_authority_management": True,
+            "organisation_management": True,
+            "authority_management": True,
             "assessment_system": True,
             "ai_learning_analytics": True,
             "quiz_management": True,

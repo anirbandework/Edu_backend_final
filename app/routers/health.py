@@ -69,22 +69,16 @@ async def database_session_test(session: AsyncSession = Depends(get_db)):
 
 @router.get("/cache-health")
 async def cache_health():
-    """Redis cache health check"""
+    """Redis cache health check — a real write+read ping (was importing a
+    non-existent `cache_manager`, so it always errored)."""
+    from ..core.cache import cache_service
     try:
-        from ..core.cache import cache_manager
-        # Basic cache connectivity test
-        return {
-            "status": "healthy",
-            "cache": "AWS ElastiCache Redis",
-            "region": "eu-north-1"
-        }
+        wrote = await cache_service.set("healthcheck:ping", "ok", ttl=10)
+        ok = wrote and (await cache_service.get("healthcheck:ping")) == "ok"
+        return {"status": "healthy" if ok else "error", "cache": "Redis"}
     except Exception as e:
         logger.error(f"Cache health check failed: {e}")
-        return {
-            "status": "error",
-            "cache": "AWS ElastiCache Redis",
-            "error": str(e)
-        }
+        return {"status": "error", "cache": "Redis", "error": str(e)}
 
 @router.get("/full-health")
 async def full_health_check():
@@ -99,11 +93,13 @@ async def full_health_check():
     db_healthy = await health_check_db()
     health_status["database"] = "healthy" if db_healthy else "unhealthy"
     
-    # Test cache
+    # Test cache (real write+read ping)
     try:
-        from ..core.cache import cache_manager
-        health_status["cache"] = "healthy"
-    except:
+        from ..core.cache import cache_service
+        wrote = await cache_service.set("healthcheck:ping", "ok", ttl=10)
+        cache_ok = wrote and (await cache_service.get("healthcheck:ping")) == "ok"
+        health_status["cache"] = "healthy" if cache_ok else "unhealthy"
+    except Exception:
         health_status["cache"] = "unhealthy"
     
     overall_status = "healthy" if all(

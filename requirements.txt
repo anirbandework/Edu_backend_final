@@ -1,111 +1,56 @@
+# Locked from the working virtualenv (the stack the app actually runs on).
+# Regenerate after adding a dependency:  ./venv/bin/python -m pip freeze > requirements.txt
+# (psycopg2-binary is required by the sync migration engine; asyncpg by the app.)
 
-
-
-# asyncpg==0.29.0
-
-
-
-# redis==5.0.1
-
-
-
-
-# # Core FastAPI and ASGI Server
-# fastapi==0.104.1
-# uvicorn[standard]==0.24.0
-
-# # Database and ORM
-# sqlalchemy==2.0.23
-# psycopg2-binary==2.9.9
-# alembic==1.12.1
-
-# # Data Validation and Serialization
-# pydantic==2.5.0
-# pydantic-settings==2.1.0
-# email-validator==2.1.0  # Add this line
-
-# # Authentication and Security
-# python-jose[cryptography]==3.3.0
-# passlib[bcrypt]==1.7.4
-# python-multipart==0.0.6
-# PyJWT==2.8.0
-# cryptography==41.0.7
-
-# # Configuration and Environment
-# python-dotenv==1.0.0
-
-# # HTTP Client
-# httpx==0.25.2
-
-
-# # Google Gemini AI
-# google-generativeai==0.3.2
-
-
-# # Consider adding for production:
-# gunicorn==21.2.0      # Production WSGI server
-# prometheus-fastapi-instrumentator==6.1.0  # Monitoring
-# structlog==23.2.0     # Better logging
-
-
-
-# greenlet>=2.0.0
-
-
-# Ultra-stable, widely-tested versions
-asyncpg==0.29.0
-redis==5.0.1
-
-# Core stack - battle-tested
-fastapi==0.104.1  
-uvicorn[standard]==0.24.0
-
-# Database - stable
-sqlalchemy==2.0.25
-alembic==1.12.1
-
-# Data validation - stable  
-pydantic==2.5.3
-pydantic-settings==2.1.0
-email-validator==2.1.0
-
-# Bulk operations essentials
-pandas==2.1.4
-openpyxl==3.1.2
-python-multipart==0.0.6
-
-# Security - known good versions
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-PyJWT==2.8.0
-cryptography==41.0.7  # This version definitely exists
-
-# Configuration
-python-dotenv==1.0.0
-
-# HTTP Client
-httpx==0.25.2
-requests==2.31.0
-
-# AI
-google-generativeai==0.3.2
-
-# Production
-gunicorn==21.2.0
-
-# File processing
-chardet==5.2.0
-
-# Performance  
-orjson==3.9.10
-
-greenlet>=2.0.0
-typing-extensions>=4.8.0
-
-# Chat system requirements
-websockets==12.0
-python-socketio==5.10.0
-
-# Background tasks
+alembic==1.17.2
+amqp==5.3.1
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.11.0
+asyncpg==0.30.0
+bcrypt==5.0.0
+billiard==4.2.3
 celery==5.5.3
+certifi==2025.11.12
+charset-normalizer==3.4.4
+click==8.3.1
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.3.0
+dnspython==2.8.0
+email-validator==2.3.0
+et_xmlfile==2.0.0
+fastapi==0.121.2
+greenlet==3.2.4
+gunicorn==23.0.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.11
 kombu==5.5.4
+Mako==1.3.10
+MarkupSafe==3.0.3
+openpyxl==3.1.2
+packaging==25.0
+prompt_toolkit==3.0.52
+psycopg2-binary==2.9.11
+pydantic==2.12.4
+pydantic-settings==2.12.0
+pydantic_core==2.41.5
+PyJWT==2.13.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.1
+python-multipart==0.0.32
+redis==7.0.1
+requests==2.31.0
+six==1.17.0
+sniffio==1.3.1
+SQLAlchemy==2.0.44
+starlette==0.49.3
+typing-inspection==0.4.2
+typing_extensions==4.15.0
+tzdata==2025.2
+urllib3==2.5.0
+uvicorn==0.38.0
+vine==5.1.0
+wcwidth==0.2.14

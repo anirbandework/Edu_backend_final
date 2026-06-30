@@ -4,27 +4,58 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.member import Member
-from ...auth_rbac.security.password import hash_password
+from ...auth_rbac.security.password import hash_password_async
 from ...auth_rbac.access.service import RBACService
 from ...auth_rbac.access.models import RbacRole
 
 
 def _gen_staff_id() -> str:
-    return "STF-" + uuid.uuid4().hex[:6].upper()
+    return "STF-" + uuid.uuid4().hex[:12].upper()  # 48 bits — collision-safe for bulk imports
 
 
 class StaffService:
     @staticmethod
-    async def list_staff(db: AsyncSession, tenant_id) -> list[dict]:
-        stmt = select(Member).where(Member.tenant_id == tenant_id)
+    async def list_staff(db: AsyncSession, organisation_id, *, limit: int = 100,
+                         offset: int = 0, q: str = "", role_id: Optional[str] = None) -> dict:
+        """Paginated + searchable staff list for one organisation. Returns an envelope
+        {items, total, limit, offset} so the client can page (a school's students are
+        staff members, so this list can be large). `q` matches name (incl. full
+        "First Last"), email, phone, staff id, OR role name; `role_id` filters to one role."""
+        base = select(Member).where(Member.organisation_id == organisation_id)
         if hasattr(Member, "is_deleted"):
-            stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
-        rows = (await db.execute(stmt.order_by(Member.created_at.desc()))).scalars().all()
+            base = base.where(Member.is_deleted == False)  # noqa: E712
+        if role_id:
+            base = base.where(Member.rbac_role_id == role_id)
+        term = (q or "").strip()
+        if term:
+            like = f"%{term}%"
+            # roles in THIS org whose name matches — so "teacher" finds everyone with that role.
+            role_match = (
+                select(RbacRole.id)
+                .where(RbacRole.organisation_id == organisation_id,
+                       RbacRole.role_name.ilike(like))
+            )
+            base = base.where(or_(
+                Member.first_name.ilike(like),
+                Member.last_name.ilike(like),
+                # full name, so "John Doe" matches first+last together (concat is NULL-safe)
+                func.concat(Member.first_name, " ", Member.last_name).ilike(like),
+                Member.email.ilike(like),
+                Member.phone.ilike(like),
+                Member.staff_id.ilike(like),
+                Member.rbac_role_id.in_(role_match),
+            ))
+        total = (await db.execute(
+            select(func.count()).select_from(base.subquery())
+        )).scalar() or 0
+        rows = (await db.execute(
+            base.order_by(Member.created_at.desc()).limit(limit).offset(offset)
+        )).scalars().all()
         # role names in one shot
         role_ids = {str(s.rbac_role_id) for s in rows if s.rbac_role_id}
         role_names: dict[str, str] = {}
@@ -33,11 +64,16 @@ class StaffService:
                 select(RbacRole).where(RbacRole.id.in_(list(role_ids)))
             )).scalars().all()
             role_names = {str(r.id): r.role_name for r in rroles}
-        return [StaffService._serialize(s, role_names) for s in rows]
+        return {
+            "items": [StaffService._serialize(s, role_names) for s in rows],
+            "total": int(total),
+            "limit": limit,
+            "offset": offset,
+        }
 
     @staticmethod
-    def _serialize(s: Member, role_names: dict) -> dict:
-        return {
+    def _serialize(s: Member, role_names: dict, *, include_custom: bool = False) -> dict:
+        out = {
             "id": str(s.id),
             "staff_id": s.staff_id,
             "first_name": s.first_name,
@@ -52,10 +88,15 @@ class StaffService:
             "has_login": bool(s.password_hash),
             "created_at": s.created_at.isoformat() if s.created_at else None,
         }
+        # Custom-field VALUES (parent phone, address, ...) are PII and can be bulky, so
+        # they ride only on the single-member detail fetch — never on the list payload.
+        if include_custom:
+            out["custom_fields"] = (s.profile or {}).get("custom_fields") or {}
+        return out
 
     @staticmethod
-    async def get(db: AsyncSession, staff_id, tenant_id) -> Optional[Member]:
-        stmt = select(Member).where(Member.id == staff_id, Member.tenant_id == tenant_id)
+    async def get(db: AsyncSession, staff_id, organisation_id) -> Optional[Member]:
+        stmt = select(Member).where(Member.id == staff_id, Member.organisation_id == organisation_id)
         if hasattr(Member, "is_deleted"):
             stmt = stmt.where(Member.is_deleted == False)  # noqa: E712
         return (await db.execute(stmt)).scalar_one_or_none()
@@ -63,8 +104,9 @@ class StaffService:
     @staticmethod
     async def _phone_taken(db: AsyncSession, phone: str, exclude_id=None) -> bool:
         """Phone must be unique across EVERY identity table — login resolves a user
-        by phone across school_authorities/members/teachers/students, so a
-        collision would let one account shadow another at login."""
+        by phone across authorities + members, so a collision would let one account
+        shadow another at login. (The legacy teachers/students tables were removed in
+        the strip-down; the only identity tables now are members + authorities.)"""
         # members (allow excluding the row being updated)
         q = "SELECT 1 FROM members WHERE phone = :p AND is_deleted = false"
         params = {"p": phone}
@@ -73,19 +115,16 @@ class StaffService:
             params["eid"] = str(exclude_id)
         if (await db.execute(text(q + " LIMIT 1"), params)).first():
             return True
-        for tbl in ("school_authorities", "teachers", "students"):
-            row = (await db.execute(
-                text(f"SELECT 1 FROM {tbl} WHERE phone = :p AND is_deleted = false LIMIT 1"),
-                {"p": phone},
-            )).first()
-            if row:
-                return True
-        return False
+        row = (await db.execute(
+            text("SELECT 1 FROM authorities WHERE phone = :p AND is_deleted = false LIMIT 1"),
+            {"p": phone},
+        )).first()
+        return bool(row)
 
     @staticmethod
     async def create(
-        db: AsyncSession, *, tenant_id, rbac_role_id, first_name, last_name, phone,
-        password=None, email=None, position=None, created_by=None,
+        db: AsyncSession, *, organisation_id, rbac_role_id, first_name, last_name, phone,
+        password=None, email=None, position=None, created_by=None, custom_values=None,
     ) -> Member:
         phone = (phone or "").strip()
         if not phone:
@@ -95,18 +134,20 @@ class StaffService:
         # Password-less by design: the admin never sets a password. The user sets
         # their own at first login (phone + OTP); status='invited' until they do.
         staff = Member(
-            tenant_id=tenant_id,
+            organisation_id=organisation_id,
             rbac_role_id=rbac_role_id,
             staff_id=_gen_staff_id(),
             first_name=(first_name or "").strip(),
             last_name=(last_name or "").strip(),
             email=(email or None),
             phone=phone,
-            password_hash=hash_password(password) if password else None,
+            password_hash=(await hash_password_async(password)) if password else None,
             position=(position or None),
             status="active" if password else "invited",
             role="staff",
             created_by=created_by,
+            # Role-specific custom field values (grade, parent name, ...) live in profile.
+            profile={"custom_fields": custom_values} if custom_values else None,
         )
         db.add(staff)
         try:
@@ -120,7 +161,22 @@ class StaffService:
 
     @staticmethod
     async def update(db: AsyncSession, staff: Member, *, first_name=None, last_name=None,
-                     email=None, phone=None, position=None, rbac_role_id=None) -> Member:
+                     email=None, phone=None, position=None, rbac_role_id=None,
+                     custom_values=None) -> Member:
+        # Is the role actually changing? (used for orphaned-value cleanup below)
+        role_changing = rbac_role_id is not None and (rbac_role_id or None) != staff.rbac_role_id
+        if custom_values is not None:
+            # Reassign the whole dict so SQLAlchemy flags the JSON column dirty.
+            prof = dict(staff.profile or {})
+            prof["custom_fields"] = custom_values
+            staff.profile = prof
+        elif role_changing and (staff.profile or {}).get("custom_fields"):
+            # Role changed without new values supplied → drop the OLD role's field
+            # values. They belong to a different role's fields; retaining them is stale
+            # PII (and would never be shown, since display reads the new role's defs).
+            prof = dict(staff.profile or {})
+            prof["custom_fields"] = {}
+            staff.profile = prof
         if phone is not None:
             phone = phone.strip()
             if phone and phone != staff.phone and await StaffService._phone_taken(db, phone, exclude_id=staff.id):
@@ -135,7 +191,13 @@ class StaffService:
         if position is not None:
             staff.position = position or None
         if rbac_role_id is not None:
-            staff.rbac_role_id = rbac_role_id or None
+            new_role = rbac_role_id or None
+            # Recover an ORPHANED user: one left role-less + deactivated when their role
+            # was deleted. Giving them a role again restores login — active if they have a
+            # password, else 'invited' so they can still complete first-login (phone + OTP).
+            if new_role and staff.rbac_role_id is None and staff.status == "inactive":
+                staff.status = "active" if staff.password_hash else "invited"
+            staff.rbac_role_id = new_role
         try:
             await db.commit()
         except IntegrityError:
@@ -146,7 +208,18 @@ class StaffService:
 
     @staticmethod
     async def set_status(db: AsyncSession, staff: Member, active: bool) -> Member:
+        # An active user must hold a role. A role-less user (orphaned by a role deletion)
+        # can only be brought back by ASSIGNING a role, which re-activates them — not by
+        # flipping status alone.
+        if active and staff.rbac_role_id is None:
+            raise ValueError("Assign a role to this user before activating them.")
         staff.status = "active" if active else "inactive"
+        if not active:
+            # Deactivation must kill live tokens too — the per-request check enforces
+            # sessions_invalidated_at, not status, so without this a just-deactivated
+            # user keeps a working access token until it expires.
+            from ...auth_rbac.security.sessions import invalidate_sessions
+            await invalidate_sessions(db, "staff", staff.id)
         await db.commit()
         await db.refresh(staff)
         return staff
@@ -155,7 +228,9 @@ class StaffService:
     async def reset_password(db: AsyncSession, staff: Member, new_password: str) -> None:
         if not new_password:
             raise ValueError("Password is required.")
-        staff.password_hash = hash_password(new_password)
+        staff.password_hash = await hash_password_async(new_password)
+        from ...auth_rbac.security.sessions import invalidate_sessions
+        await invalidate_sessions(db, "staff", staff.id)  # log out the member's old sessions
         await db.commit()
 
     @staticmethod
@@ -168,8 +243,10 @@ class StaffService:
     # ---- delegation ----
     @staticmethod
     async def can_principal_create_role(db: AsyncSession, principal, target_role_id) -> bool:
-        """Admin/super-admin may assign any role in the tenant; a staff user only
-        roles their own role was delegated to create."""
+        """Admin/super-admin may assign any role in the organisation. A staff user who
+        holds the "Staff & Users" page may assign any of the organisation's roles —
+        granting that page IS the grant to manage users. (That the target is a staff
+        role in this org is enforced by the caller in _validate_role.)"""
         if principal.is_super_admin or principal.is_authority:
             return True
         if principal.role != "staff":
@@ -178,5 +255,7 @@ class StaffService:
         my_role = await resolve_role_id(db, "staff", principal.user_id)
         if not my_role:
             return False
-        allowed = await RBACService.get_creatable_role_ids(db, my_role)
-        return str(target_role_id) in {str(a) for a in allowed}
+        return await RBACService.has_module_access(
+            db, user_type="staff", organisation_id=principal.organisation_uuid,
+            role_id=my_role, module_key="staff",
+        )

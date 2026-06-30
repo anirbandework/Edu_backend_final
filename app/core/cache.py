@@ -51,4 +51,19 @@ class CacheService:
             logger.error(f"Cache delete error: {e}")
             return False
 
+    async def incr(self, key: str, ttl: int) -> Optional[int]:
+        """Atomically increment a counter, setting its TTL on first creation.
+        Returns the new count, or None if the cache is unavailable (caller decides
+        the fail-open/closed policy). Used for fixed-window rate limiting."""
+        try:
+            if not self.client:
+                await self.initialize()
+            value = await self.client.incr(key)
+            if value == 1:
+                await self.client.expire(key, ttl)
+            return int(value)
+        except Exception as e:
+            logger.error(f"Cache incr error: {e}")
+            return None
+
 cache_service = CacheService()

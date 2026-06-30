@@ -24,29 +24,31 @@ def _encode(payload: dict) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(*, user_id: str, role: str, tenant_id: Optional[str]) -> str:
+def create_access_token(*, user_id: str, role: str, organisation_id: Optional[str], group_id: Optional[str] = None) -> str:
     now = _now()
     payload = {
         "sub": str(user_id),
         "role": role,
-        "tenant_id": str(tenant_id) if tenant_id else None,
+        "organisation_id": str(organisation_id) if organisation_id else None,
+        "group_id": str(group_id) if group_id else None,
         "type": ACCESS,
         "jti": uuid.uuid4().hex,
-        "iat": int(now.timestamp()),
+        "iat": now.timestamp(),  # sub-second precision so session-invalidation is exact
         "exp": int((now + timedelta(minutes=settings.access_token_expire_minutes)).timestamp()),
     }
     return _encode(payload)
 
 
-def create_refresh_token(*, user_id: str, role: str, tenant_id: Optional[str]) -> str:
+def create_refresh_token(*, user_id: str, role: str, organisation_id: Optional[str], group_id: Optional[str] = None) -> str:
     now = _now()
     payload = {
         "sub": str(user_id),
         "role": role,
-        "tenant_id": str(tenant_id) if tenant_id else None,
+        "organisation_id": str(organisation_id) if organisation_id else None,
+        "group_id": str(group_id) if group_id else None,
         "type": REFRESH,
         "jti": uuid.uuid4().hex,
-        "iat": int(now.timestamp()),
+        "iat": now.timestamp(),  # sub-second precision so session-invalidation is exact
         "exp": int((now + timedelta(days=settings.refresh_token_expire_days)).timestamp()),
     }
     return _encode(payload)

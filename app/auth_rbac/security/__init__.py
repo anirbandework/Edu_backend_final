@@ -14,7 +14,7 @@ from .deps import (
     require_super_admin,
     require_authority,
     require_staff,
-    assert_same_tenant,
+    assert_same_organisation,
 )
 
 __all__ = [
@@ -22,5 +22,5 @@ __all__ = [
     "create_access_token", "create_refresh_token", "decode_token", "TokenError",
     "Principal", "ROLE_SUPER_ADMIN", "ROLE_AUTHORITY",
     "get_current_principal", "require_roles", "require_super_admin",
-    "require_authority", "require_staff", "assert_same_tenant",
+    "require_authority", "require_staff", "assert_same_organisation",
 ]

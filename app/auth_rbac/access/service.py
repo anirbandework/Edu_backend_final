@@ -1,4 +1,12 @@
-"""RBACService — permission resolution + role/tenant CRUD (module/tab model)."""
+"""RBACService — permission resolution + role/organisation CRUD (module model).
+
+Ceilings are now per INSTITUTION GROUP (not per organisation): the super-admin sets,
+per group, (a) the role page-pool (role_enabled) and (b) the admin pages
+(admin_enabled). Both apply to every organisation in the group. Resolution
+functions still receive an `organisation_id` and resolve its group internally;
+the super-admin editor functions take a `group_id` directly. RBAC roles stay
+per-organisation.
+"""
 from __future__ import annotations
 import re
 import uuid
@@ -9,9 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import catalog
-from .catalog import MODULES, PREMIUM_MODULE_KEYS, get_module, modules_for, enabled_field, AUTHORITY
+from .catalog import MODULES, PREMIUM_MODULE_KEYS, get_module, modules_for, AUTHORITY
 from .models import (
-    RbacRole, TenantModulePermission, TenantTabPermission,
+    RbacRole, GroupModulePermission, GroupTabPermission,
     RoleModulePermission, RoleTabPermission,
 )
 
@@ -21,199 +29,115 @@ def _slug(name: str) -> str:
 
 
 class RBACService:
-    # ---------------- resolution ----------------
+    # ---------------- org → group resolution ----------------
     @staticmethod
-    async def get_user_permissions(
-        db: AsyncSession, *, user_type: str, tenant_id, role_id=None
-    ) -> list[dict]:
-        """Full module list (for the caller's audience) with effective enabled +
-        per-tab permissions. Super-admin should not call this (it sees everything)."""
-        tperm = {
-            r.module_key: r
-            for r in (await db.execute(
-                select(TenantModulePermission).where(TenantModulePermission.tenant_id == tenant_id)
-            )).scalars().all()
-        }
-        ttab = {
-            (r.module_key, r.tab_key): r.enabled
-            for r in (await db.execute(
-                select(TenantTabPermission).where(TenantTabPermission.tenant_id == tenant_id)
-            )).scalars().all()
-        }
-        rperm, rtab = {}, {}
-        if role_id:
-            rperm = {
-                r.module_key: r.enabled
-                for r in (await db.execute(
-                    select(RoleModulePermission).where(RoleModulePermission.role_id == role_id)
-                )).scalars().all()
-            }
-            rtab = {
-                (r.module_key, r.tab_key): r.enabled
-                for r in (await db.execute(
-                    select(RoleTabPermission).where(RoleTabPermission.role_id == role_id)
-                )).scalars().all()
-            }
-
-        field = enabled_field(user_type)
-        out = []
-        for m in modules_for(user_type):
-            key = m["module_key"]
-            tp = tperm.get(key)
-            org_enabled = getattr(tp, field) if tp else (key not in PREMIUM_MODULE_KEYS)
-            role_enabled = rperm.get(key, True) if role_id else True
-            module_enabled = bool(org_enabled and role_enabled)
-            if m.get("required"):
-                module_enabled = True  # e.g. Profile — always on
-
-            tab_perms, locked_tabs, tabs_meta = {}, {}, []
-            for tk, tl in m["tabs"]:
-                org_tab = ttab.get((key, tk), True)
-                role_tab = rtab.get((key, tk), True) if role_id else True
-                tab_perms[tk] = bool(org_tab and role_tab)
-                if not org_tab:
-                    locked_tabs[tk] = True
-                tabs_meta.append({"tab_key": tk, "tab_label": tl})
-
-            out.append({
-                "module_key": key,
-                "module_name": m["module_name"],
-                "icon": m["icon"],
-                "path": m["path"],
-                "enabled": module_enabled,
-                "required": bool(m.get("required")),
-                "locked": (not org_enabled),
-                "tabs": tabs_meta,
-                "tab_permissions": tab_perms,
-                "locked_tabs": locked_tabs,
-            })
-        return out
-
-    @staticmethod
-    async def has_module_access(
-        db: AsyncSession, *, user_type: str, tenant_id, role_id, module_key: str
-    ) -> bool:
-        """Server-side gate. tenant_enabled AND role_enabled (deny-list defaults).
-
-        For the unified 'staff' user_type this is an EXPLICIT allow-list: a module
-        is accessible only if the role has a RoleModulePermission row with
-        enabled=True (no audience / tenant-ceiling gating)."""
-        if user_type == catalog.STAFF:
-            m = get_module(module_key)
-            if not m:
-                return False
-            if m.get("required"):
-                return True  # e.g. Profile — always accessible
-            # org ceiling: the page must be granted to this org (what they "paid for")
-            if not await RBACService.tenant_has_page(db, tenant_id, module_key):
-                return False
-            if not role_id:
-                return False
-            rp = (await db.execute(
-                select(RoleModulePermission).where(
-                    RoleModulePermission.role_id == role_id,
-                    RoleModulePermission.module_key == module_key,
-                )
-            )).scalar_one_or_none()
-            return bool(rp and rp.enabled)
-        m = get_module(module_key)
-        if not m or user_type not in m["audience"]:
-            return False
-        tp = (await db.execute(
-            select(TenantModulePermission).where(
-                TenantModulePermission.tenant_id == tenant_id,
-                TenantModulePermission.module_key == module_key,
-            )
+    async def group_id_for_org(db: AsyncSession, organisation_id):
+        """The institution group an organisation belongs to (ceilings live there)."""
+        if not organisation_id:
+            return None
+        from ...organisation_management.models.organisation import Organisation
+        return (await db.execute(
+            select(Organisation.group_id).where(Organisation.id == organisation_id)
         )).scalar_one_or_none()
-        org_enabled = getattr(tp, enabled_field(user_type)) if tp else (module_key not in PREMIUM_MODULE_KEYS)
-        if not org_enabled:
-            return False
-        if role_id:
-            rp = (await db.execute(
-                select(RoleModulePermission).where(
-                    RoleModulePermission.role_id == role_id,
-                    RoleModulePermission.module_key == module_key,
-                )
-            )).scalar_one_or_none()
-            if rp is not None and not rp.enabled:
-                return False
-        return True
 
+    # ---------------- group ceiling reads (keyed by group_id) ----------------
     @staticmethod
-    async def _tenant_module_allowed(db, tenant_id, user_type, module_key) -> bool:
-        tp = (await db.execute(
-            select(TenantModulePermission).where(
-                TenantModulePermission.tenant_id == tenant_id,
-                TenantModulePermission.module_key == module_key,
-            )
-        )).scalar_one_or_none()
-        return getattr(tp, enabled_field(user_type)) if tp else (module_key not in PREMIUM_MODULE_KEYS)
-
-    @staticmethod
-    async def tenant_has_page(db, tenant_id, module_key) -> bool:
-        """ORG-LEVEL ceiling (audience-agnostic): may this organisation use this
-        page at all? = what the super-admin granted the org ("paid for"). No row
-        => default granted (unless premium). A page is on for the org if it's on
-        for any audience column."""
-        if not tenant_id:
-            return module_key not in PREMIUM_MODULE_KEYS
-        tp = (await db.execute(
-            select(TenantModulePermission).where(
-                TenantModulePermission.tenant_id == tenant_id,
-                TenantModulePermission.module_key == module_key,
-            )
-        )).scalar_one_or_none()
-        if tp is None:
-            return module_key not in PREMIUM_MODULE_KEYS
-        return bool(tp.authority_enabled or tp.teacher_enabled or tp.student_enabled)
-
-    @staticmethod
-    async def tenant_admin_has_page(db, tenant_id, module_key) -> bool:
-        """ADMIN ceiling: may this org's ADMIN use/see this page (admin_enabled)?
-        Required pages are always on; no row => default True (backward compatible),
-        so this only ever denies a page the super-admin EXPLICITLY revoked."""
-        m = get_module(module_key)
-        if m and m.get("required"):
-            return True
-        if not tenant_id:
-            return True
-        tp = (await db.execute(
-            select(TenantModulePermission).where(
-                TenantModulePermission.tenant_id == tenant_id,
-                TenantModulePermission.module_key == module_key,
-            )
-        )).scalar_one_or_none()
-        return bool(tp.admin_enabled) if tp is not None else True
-
-    @staticmethod
-    async def _org_ceiling_map(db, tenant_id) -> dict:
-        """{module_key: org_granted_bool} for a tenant, from one query (default
-        ON for modules with no row, unless premium)."""
+    async def _group_role_map(db, group_id) -> dict:
+        """{module_key: in_group_pool_bool}. Default ON (no row), unless premium."""
         rows = []
-        if tenant_id:
+        if group_id:
             rows = (await db.execute(
-                select(TenantModulePermission).where(TenantModulePermission.tenant_id == tenant_id)
+                select(GroupModulePermission).where(GroupModulePermission.group_id == group_id)
             )).scalars().all()
-        explicit = {r.module_key: bool(r.authority_enabled or r.teacher_enabled or r.student_enabled)
-                    for r in rows}
+        explicit = {r.module_key: bool(r.role_enabled) for r in rows}
         return {m["module_key"]: explicit.get(m["module_key"], m["module_key"] not in PREMIUM_MODULE_KEYS)
                 for m in MODULES}
 
     @staticmethod
-    async def _tenant_tab_allowed(db, tenant_id, module_key, tab_key) -> bool:
+    async def _group_admin_map(db, group_id) -> dict:
+        """{module_key: admin_can_see_it}. Default ON (no row)."""
+        rows = []
+        if group_id:
+            rows = (await db.execute(
+                select(GroupModulePermission).where(GroupModulePermission.group_id == group_id)
+            )).scalars().all()
+        explicit = {r.module_key: bool(r.admin_enabled) for r in rows}
+        return {m["module_key"]: explicit.get(m["module_key"], True) for m in MODULES}
+
+    @staticmethod
+    async def _group_role_enabled(db, group_id, module_key) -> bool:
+        if not group_id:
+            return module_key not in PREMIUM_MODULE_KEYS
         row = (await db.execute(
-            select(TenantTabPermission).where(
-                TenantTabPermission.tenant_id == tenant_id,
-                TenantTabPermission.module_key == module_key,
-                TenantTabPermission.tab_key == tab_key,
+            select(GroupModulePermission).where(
+                GroupModulePermission.group_id == group_id,
+                GroupModulePermission.module_key == module_key,
+            )
+        )).scalar_one_or_none()
+        return bool(row.role_enabled) if row is not None else (module_key not in PREMIUM_MODULE_KEYS)
+
+    @staticmethod
+    async def _group_tab_enabled(db, group_id, module_key, tab_key) -> bool:
+        row = (await db.execute(
+            select(GroupTabPermission).where(
+                GroupTabPermission.group_id == group_id,
+                GroupTabPermission.module_key == module_key,
+                GroupTabPermission.tab_key == tab_key,
             )
         )).scalar_one_or_none()
         return row.enabled if row else True
 
-    # ---------------- roles (tier-1) ----------------
+    # ---------------- resolution (org-scoped callers) ----------------
     @staticmethod
-    async def list_roles(db, tenant_id, user_type: Optional[str] = None):
-        stmt = select(RbacRole).where(RbacRole.tenant_id == tenant_id)
+    async def organisation_has_page(db, organisation_id, module_key) -> bool:
+        """Group POOL ceiling: may an organisation in this org's GROUP use this page
+        at all (= what the super-admin granted the group)? No row => default granted
+        (unless premium)."""
+        gid = await RBACService.group_id_for_org(db, organisation_id)
+        return await RBACService._group_role_enabled(db, gid, module_key)
+
+    @staticmethod
+    async def organisation_admin_has_page(db, organisation_id, module_key) -> bool:
+        """ADMIN ceiling: may this org's group's ADMINS use/see this page
+        (admin_enabled)? Required pages are always on; no row => default True, so
+        this only denies a page the super-admin EXPLICITLY revoked."""
+        m = get_module(module_key)
+        if m and m.get("required"):
+            return True
+        gid = await RBACService.group_id_for_org(db, organisation_id)
+        if not gid:
+            return True
+        amap = await RBACService._group_admin_map(db, gid)
+        return amap.get(module_key, True)
+
+    @staticmethod
+    async def has_module_access(
+        db: AsyncSession, *, user_type: str, organisation_id, role_id, module_key: str
+    ) -> bool:
+        """Server-side gate. group POOL ceiling AND the role's allow-list grant.
+        For 'staff' this is an EXPLICIT allow-list (a module is accessible only if
+        the role has a RoleModulePermission row with enabled=True)."""
+        m = get_module(module_key)
+        if not m:
+            return False
+        if m.get("required"):
+            return True  # e.g. Profile — always accessible
+        if not await RBACService.organisation_has_page(db, organisation_id, module_key):
+            return False  # group pool doesn't include this page
+        if not role_id:
+            return False
+        rp = (await db.execute(
+            select(RoleModulePermission).where(
+                RoleModulePermission.role_id == role_id,
+                RoleModulePermission.module_key == module_key,
+            )
+        )).scalar_one_or_none()
+        return bool(rp and rp.enabled)
+
+    # ---------------- roles (tier-1, per organisation) ----------------
+    @staticmethod
+    async def list_roles(db, organisation_id, user_type: Optional[str] = None):
+        stmt = select(RbacRole).where(RbacRole.organisation_id == organisation_id)
         if hasattr(RbacRole, "is_deleted"):
             stmt = stmt.where(RbacRole.is_deleted == False)  # noqa: E712
         if user_type:
@@ -221,19 +145,21 @@ class RBACService:
         return (await db.execute(stmt.order_by(RbacRole.user_type, RbacRole.role_name))).scalars().all()
 
     @staticmethod
-    async def create_role(db, *, tenant_id, user_type, role_name, description=None, is_default=False, created_by=None):
+    async def create_role(db, *, organisation_id, user_type, role_name, description=None,
+                          is_default=False, created_by=None, custom_fields=None):
         if user_type not in catalog.ROLE_USER_TYPES:
             raise ValueError(f"invalid user_type {user_type}")
+        from . import custom_fields as cf
         role = RbacRole(
-            tenant_id=tenant_id, user_type=user_type, role_name=role_name,
+            organisation_id=organisation_id, user_type=user_type, role_name=role_name,
             role_key=_slug(role_name), description=description, is_default=is_default,
-            created_by=created_by,
+            created_by=created_by, custom_fields=cf.normalize_definitions(custom_fields),
         )
         db.add(role)
         try:
             if is_default:
                 await db.flush()
-                await RBACService._clear_other_defaults(db, tenant_id, user_type, role.id)
+                await RBACService._clear_other_defaults(db, organisation_id, user_type, role.id)
             await db.commit()
         except IntegrityError:
             await db.rollback()
@@ -242,10 +168,10 @@ class RBACService:
         return role
 
     @staticmethod
-    async def _clear_other_defaults(db, tenant_id, user_type, keep_id):
+    async def _clear_other_defaults(db, organisation_id, user_type, keep_id):
         rows = (await db.execute(
             select(RbacRole).where(
-                RbacRole.tenant_id == tenant_id, RbacRole.user_type == user_type,
+                RbacRole.organisation_id == organisation_id, RbacRole.user_type == user_type,
                 RbacRole.is_default == True, RbacRole.id != keep_id,  # noqa: E712
             )
         )).scalars().all()
@@ -260,7 +186,8 @@ class RBACService:
         return (await db.execute(stmt)).scalar_one_or_none()
 
     @staticmethod
-    async def update_role(db, role_id, *, role_name=None, description=None, is_default=None):
+    async def update_role(db, role_id, *, role_name=None, description=None, is_default=None,
+                          custom_fields=None):
         role = await RBACService.get_role(db, role_id)
         if not role:
             return None
@@ -269,35 +196,82 @@ class RBACService:
             role.role_key = _slug(role_name)
         if description is not None:
             role.description = description
+        if custom_fields is not None:
+            from . import custom_fields as cf
+            role.custom_fields = cf.normalize_definitions(custom_fields)
         if is_default is not None:
             role.is_default = is_default
             if is_default:
                 await db.flush()
-                await RBACService._clear_other_defaults(db, role.tenant_id, role.user_type, role.id)
+                await RBACService._clear_other_defaults(db, role.organisation_id, role.user_type, role.id)
         await db.commit()
         await db.refresh(role)
         return role
 
     @staticmethod
-    async def delete_role(db, role_id) -> bool:
+    async def count_role_users(db, role_id) -> int:
+        """How many (non-deleted) members currently hold this role."""
+        row = await db.execute(
+            text("SELECT count(*) FROM members WHERE rbac_role_id = :rid AND is_deleted = false"),
+            {"rid": str(role_id)})
+        return int(row.scalar() or 0)
+
+    @staticmethod
+    async def delete_role(db, role_id, *, reassign_to_role_id=None) -> bool:
+        """Hard-delete a role. Its members are EITHER moved to ``reassign_to_role_id``
+        (keeping their login) OR — when no replacement is given — left role-less AND
+        DEACTIVATED, so they cannot log in until an admin gives them a new role.
+        Permission rows cascade away; the (org,type,key) name frees up for reuse."""
         role = await RBACService.get_role(db, role_id)
         if not role:
             return False
-        # Unassign users pointing at this role (they fall back to the deny-list
-        # defaults), then hard-delete so its permission rows cascade away and the
-        # (tenant,type,key) name can be reused. Avoids stale/zombie permissions.
-        for tbl in ("school_authorities", "teachers", "students", "members"):
-            await db.execute(text(f"UPDATE {tbl} SET rbac_role_id = NULL WHERE rbac_role_id = :rid"),
-                             {"rid": str(role.id)})
+
+        target_id = None
+        if reassign_to_role_id:
+            if str(reassign_to_role_id) == str(role.id):
+                raise ValueError("Cannot reassign users to the role being deleted.")
+            target = await RBACService.get_role(db, reassign_to_role_id)
+            if not target or str(target.organisation_id) != str(role.organisation_id):
+                raise ValueError("Invalid role to reassign users to.")
+            if target.user_type != "staff":
+                raise ValueError("Users can only be reassigned to a staff role.")
+            target_id = str(target.id)
+
+        if target_id:
+            # Move members to the replacement role; they keep their status + login.
+            await db.execute(
+                text("UPDATE members SET rbac_role_id = :new "
+                     "WHERE rbac_role_id = :old AND is_deleted = false"),
+                {"new": target_id, "old": str(role.id)})
+        else:
+            # Leave unassigned: clear the role AND deactivate so they can't log in
+            # until reassigned (re-activated when an admin assigns them a new role).
+            # Stamp sessions_invalidated_at so existing access/refresh tokens die too
+            # (the per-request check enforces that timestamp, not status). Done in one
+            # bulk UPDATE so it stays cheap even for a role held by thousands of members
+            # (their Redis siat cache self-heals within its 300s TTL via DB fallback).
+            await db.execute(
+                text("UPDATE members SET rbac_role_id = NULL, status = 'inactive', "
+                     "sessions_invalidated_at = now(), "
+                     # Drop the deleted role's custom-field values too — stale role-specific
+                     # PII shouldn't linger on an orphaned account.
+                     "profile = (profile::jsonb - 'custom_fields')::json "
+                     "WHERE rbac_role_id = :old AND is_deleted = false"),
+                {"old": str(role.id)})
+        # Authorities (admins) should never hold a staff role — null defensively, no deactivation.
+        await db.execute(
+            text("UPDATE authorities SET rbac_role_id = NULL WHERE rbac_role_id = :old"),
+            {"old": str(role.id)})
+
         await db.delete(role)
         await db.commit()
         return True
 
     @staticmethod
-    async def get_default_role_id(db, tenant_id, user_type):
+    async def get_default_role_id(db, organisation_id, user_type):
         r = (await db.execute(
             select(RbacRole).where(
-                RbacRole.tenant_id == tenant_id, RbacRole.user_type == user_type,
+                RbacRole.organisation_id == organisation_id, RbacRole.user_type == user_type,
                 RbacRole.is_default == True,  # noqa: E712
                 RbacRole.is_deleted == False,  # noqa: E712
             ).limit(1)
@@ -307,30 +281,13 @@ class RBACService:
     # ---------------- role permissions (tier-1, ceiling-checked) ----------------
     @staticmethod
     async def get_role_permissions(db, role) -> list[dict]:
-        """The full module list for this role's user_type, with the role's
-        enabled flags (for the admin role-editor UI)."""
-        # Dynamic 'staff' roles aren't in the audience-based catalog and have no
-        # tenant-ceiling column (enabled_field would KeyError); use the
-        # cross-section allow-list view instead.
-        if role.user_type == catalog.STAFF:
-            return await RBACService.get_staff_permissions(db, role.id, role.tenant_id)
-        return await RBACService.get_user_permissions(
-            db, user_type=role.user_type, tenant_id=role.tenant_id, role_id=role.id
-        )
-
-    @staticmethod
-    async def _role_ceiling_ok(db, role, module_key) -> bool:
-        """Is `module_key` within the org ceiling for this role? Staff roles use the
-        audience-agnostic ceiling (enabled_field has no 'staff' column → would
-        KeyError); other roles use their audience column."""
-        if role.user_type == catalog.STAFF:
-            return await RBACService.tenant_has_page(db, role.tenant_id, module_key)
-        return await RBACService._tenant_module_allowed(db, role.tenant_id, role.user_type, module_key)
+        """The page list for this role with its enabled flags (role-editor UI)."""
+        return await RBACService.get_staff_permissions(db, role.id, role.organisation_id)
 
     @staticmethod
     async def set_role_module(db, role, module_key, enabled: bool, by=None):
-        if enabled and not await RBACService._role_ceiling_ok(db, role, module_key):
-            raise PermissionError("Module not enabled for this school by the platform admin.")
+        if enabled and not await RBACService.organisation_has_page(db, role.organisation_id, module_key):
+            raise PermissionError("Page not in this group's plan (set by the platform admin).")
         row = (await db.execute(
             select(RoleModulePermission).where(
                 RoleModulePermission.role_id == role.id,
@@ -345,8 +302,9 @@ class RBACService:
 
     @staticmethod
     async def set_role_tab(db, role, module_key, tab_key, enabled: bool, by=None):
-        if enabled and not await RBACService._tenant_tab_allowed(db, role.tenant_id, module_key, tab_key):
-            raise PermissionError("Tab not enabled for this school by the platform admin.")
+        gid = await RBACService.group_id_for_org(db, role.organisation_id)
+        if enabled and not await RBACService._group_tab_enabled(db, gid, module_key, tab_key):
+            raise PermissionError("Tab not in this group's plan (set by the platform admin).")
         row = (await db.execute(
             select(RoleTabPermission).where(
                 RoleTabPermission.role_id == role.id,
@@ -362,11 +320,10 @@ class RBACService:
 
     # ---------------- unified dynamic staff roles ----------------
     @staticmethod
-    async def get_staff_permissions(db, role_id, tenant_id=None) -> list[dict]:
-        """Effective module list for a STAFF user: role allow-list INTERSECTED with
-        the org ceiling. `enabled` = role granted AND org granted. `locked` = the
-        org doesn't have this page ("premium / not in plan") — distinct from a page
-        the admin simply hasn't assigned to the role."""
+    async def get_staff_permissions(db, role_id, organisation_id=None) -> list[dict]:
+        """Effective page list for a STAFF user: role allow-list INTERSECTED with the
+        group pool. `enabled` = role granted AND group granted. `locked` = the group
+        doesn't have this page ("premium / not in plan")."""
         rperm = {}
         if role_id:
             rperm = {
@@ -375,14 +332,15 @@ class RBACService:
                     select(RoleModulePermission).where(RoleModulePermission.role_id == role_id)
                 )).scalars().all()
             }
-        ceiling = await RBACService._org_ceiling_map(db, tenant_id)
+        gid = await RBACService.group_id_for_org(db, organisation_id)
+        ceiling = await RBACService._group_role_map(db, gid)
         out = []
         for m in MODULES:
             key = m["module_key"]
-            org_ok = ceiling.get(key, True)
+            grp_ok = ceiling.get(key, True)
             role_ok = bool(rperm.get(key, False))  # default-DENY for staff
-            enabled = role_ok and org_ok
-            locked = (not org_ok)
+            enabled = role_ok and grp_ok
+            locked = (not grp_ok)
             if m.get("required"):
                 enabled = True   # e.g. Profile — always on for everyone
                 locked = False
@@ -398,13 +356,12 @@ class RBACService:
         return out
 
     @staticmethod
-    async def grantable_pages(db, tenant_id) -> list[dict]:
-        """Catalog for the admin's role-permission picker — ONLY pages a dynamic
-        'staff' role can actually use (excludes admin-only + teacher/student-coupled
-        pages whose endpoints would 403 for staff). Each carries `locked` = the org
-        doesn't have it (→ 'Premium/upgrade', not assignable). Required pages are
-        never locked."""
-        ceiling = await RBACService._org_ceiling_map(db, tenant_id)
+    async def grantable_pages(db, organisation_id) -> list[dict]:
+        """Catalog for the admin's role-permission picker — ONLY pages a 'staff' role
+        can actually use. Each carries `locked` = the group doesn't have it
+        (→ 'Premium/upgrade'). Required pages are never locked."""
+        gid = await RBACService.group_id_for_org(db, organisation_id)
+        ceiling = await RBACService._group_role_map(db, gid)
         out = []
         for m in MODULES:
             if m.get("admin_only") or not m.get("staff_grantable", True):
@@ -419,114 +376,19 @@ class RBACService:
             })
         return out
 
-    # ---------------- org page grant (super-admin, per tenant) ----------------
-    @staticmethod
-    async def get_org_pages(db, tenant_id) -> list[dict]:
-        """Per-page org grant for the super-admin's org editor. Excludes admin-only
-        pages (those are the admin's own constant tools, not part of an org plan)."""
-        ceiling = await RBACService._org_ceiling_map(db, tenant_id)
-        return [{
-            "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
-            "path": m["path"], "section": m.get("section"), "audience_group": m.get("audience_group"),
-            "required": bool(m.get("required")),
-            "enabled": True if m.get("required") else ceiling.get(m["module_key"], True),
-        } for m in MODULES if not m.get("admin_only")]
-
-    @staticmethod
-    async def set_org_page(db, tenant_id, module_key, enabled: bool, by=None):
-        """Grant/revoke a single page for an org — sets all audience columns the
-        same (audience-agnostic org ceiling). Required/admin-only pages are no-ops."""
-        m = get_module(module_key)
-        if not m:
-            raise ValueError("Unknown page")
-        if m.get("required") or m.get("admin_only"):
-            return  # always-on / not part of the org plan
-        await RBACService.set_tenant_module(
-            db, tenant_id, module_key, authority=enabled, teacher=enabled, student=enabled, by=by)
-
-    @staticmethod
-    async def set_all_org_pages(db, tenant_id, enabled: bool, by=None):
-        for m in MODULES:
-            if m.get("required") or m.get("admin_only"):
-                continue
-            await RBACService.set_tenant_module(
-                db, tenant_id, m["module_key"], authority=enabled, teacher=enabled, student=enabled, by=by)
-
-    # ------------- admin page grant (super-admin → admin's OWN sidebar) ----------
-    @staticmethod
-    async def _admin_ceiling_map(db, tenant_id) -> dict:
-        """{module_key: admin_can_see_it} for a tenant. Default ON (no row)."""
-        rows = []
-        if tenant_id:
-            rows = (await db.execute(
-                select(TenantModulePermission).where(TenantModulePermission.tenant_id == tenant_id)
-            )).scalars().all()
-        explicit = {r.module_key: bool(r.admin_enabled) for r in rows}
-        return {m["module_key"]: explicit.get(m["module_key"], True) for m in MODULES}
-
-    @staticmethod
-    async def get_admin_permissions(db, tenant_id) -> list[dict]:
-        """The ADMIN's own sidebar = admin-audience pages the super-admin left ON
-        for this org (admin_enabled). Required pages (Profile) are always on. The
-        shape matches a my-permissions module entry so the client can gate on it."""
-        ceiling = await RBACService._admin_ceiling_map(db, tenant_id)
-        out = []
-        for m in modules_for(AUTHORITY):
-            enabled = True if m.get("required") else ceiling.get(m["module_key"], True)
-            out.append({
-                "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
-                "path": m["path"], "enabled": enabled, "required": bool(m.get("required")), "locked": False,
-                "tabs": [{"tab_key": t[0], "tab_label": t[1]} for t in m["tabs"]],
-                "tab_permissions": {t[0]: True for t in m["tabs"]}, "locked_tabs": {},
-            })
-        return out
-
-    @staticmethod
-    async def get_admin_pages(db, tenant_id) -> list[dict]:
-        """Per-page ADMIN grant for the super-admin's 'Admin pages' editor — every
-        admin-audience page (incl. admin-only tools like Roles & Access / Staff),
-        with enabled = admin_enabled. Required pages render locked-on."""
-        ceiling = await RBACService._admin_ceiling_map(db, tenant_id)
-        return [{
-            "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
-            "path": m["path"], "section": m.get("section"), "audience_group": m.get("audience_group"),
-            "required": bool(m.get("required")),
-            "enabled": True if m.get("required") else ceiling.get(m["module_key"], True),
-        } for m in modules_for(AUTHORITY)]
-
-    @staticmethod
-    async def set_admin_page(db, tenant_id, module_key, enabled: bool, by=None):
-        """Show/hide ONE page in the ADMIN's own sidebar. Required pages are no-ops
-        (always on). Does not touch the distributable audience columns."""
-        m = get_module(module_key)
-        if not m:
-            raise ValueError("Unknown page")
-        if m.get("required"):
-            return
-        await RBACService.set_tenant_module(db, tenant_id, module_key, admin=enabled, by=by)
-
-    @staticmethod
-    async def set_all_admin_pages(db, tenant_id, enabled: bool, by=None):
-        for m in modules_for(AUTHORITY):
-            if m.get("required"):
-                continue
-            await RBACService.set_tenant_module(db, tenant_id, m["module_key"], admin=enabled, by=by)
-
     @staticmethod
     async def set_role_modules(db, role, module_keys: list[str], by=None):
         """Replace a role's granted modules with exactly `module_keys` (enabled).
-        Used by the cross-section page-picker. Allow-list semantics: anything not
-        listed is removed (= denied). Pages outside the org ceiling (locked/premium)
-        and admin-only / non-staff-grantable pages are dropped — the admin can only
-        assign what the org has and what a staff role can actually use."""
+        Allow-list semantics: anything not listed is removed. Pages outside the group
+        pool (locked) and admin-only / non-staff-grantable pages are dropped."""
         candidate = {mk for mk in module_keys if get_module(mk)}
         valid = set()
         for mk in candidate:
             m = get_module(mk)
             if m.get("admin_only") or not m.get("staff_grantable", True):
                 continue
-            if not m.get("required") and not await RBACService.tenant_has_page(db, role.tenant_id, mk):
-                continue  # org doesn't have this page → can't be granted
+            if not m.get("required") and not await RBACService.organisation_has_page(db, role.organisation_id, mk):
+                continue  # group doesn't have this page → can't be granted
             valid.add(mk)
         existing = {
             r.module_key: r
@@ -556,11 +418,8 @@ class RBACService:
 
     @staticmethod
     async def set_creatable_roles(db, role_id, creatable_role_ids: list[str]):
-        """Replace which roles a holder of `role_id` may create users into.
-
-        Candidates are validated: malformed UUIDs are dropped (avoids a DataError
-        500), and only roles in the SAME tenant with user_type 'staff' are kept
-        (avoids cross-tenant delegation and pointing at non-staff roles)."""
+        """Replace which roles a holder of `role_id` may create users into. Only
+        roles in the SAME organisation with user_type 'staff' are kept."""
         from .models import RoleCreatableRole
         owner = await RBACService.get_role(db, role_id)
         if not owner:
@@ -580,7 +439,7 @@ class RBACService:
             rows = (await db.execute(
                 select(RbacRole.id).where(
                     RbacRole.id.in_(candidates),
-                    RbacRole.tenant_id == owner.tenant_id,
+                    RbacRole.organisation_id == owner.organisation_id,
                     RbacRole.user_type == catalog.STAFF,
                     RbacRole.is_deleted == False,  # noqa: E712
                 )
@@ -608,76 +467,124 @@ class RBACService:
         )).scalars().all()
         return [str(r.creatable_role_id) for r in rows]
 
-    # ---------------- tenant ceiling (tier-0, super-admin) ----------------
-    @staticmethod
-    async def get_tenant_permissions(db, tenant_id) -> list[dict]:
-        tperm = {
-            r.module_key: r for r in (await db.execute(
-                select(TenantModulePermission).where(TenantModulePermission.tenant_id == tenant_id)
-            )).scalars().all()
-        }
-        ttab = {
-            (r.module_key, r.tab_key): r.enabled for r in (await db.execute(
-                select(TenantTabPermission).where(TenantTabPermission.tenant_id == tenant_id)
-            )).scalars().all()
-        }
-        out = []
-        for m in MODULES:
-            key = m["module_key"]
-            tp = tperm.get(key)
-            tabs = []
-            for tk, tl in m["tabs"]:
-                tabs.append({"tab_key": tk, "tab_label": tl, "enabled": ttab.get((key, tk), True)})
-            out.append({
-                "module_key": key, "module_name": m["module_name"], "icon": m["icon"],
-                "path": m["path"], "audience": m["audience"], "premium": m["premium"],
-                "authority_enabled": tp.authority_enabled if tp else (key not in PREMIUM_MODULE_KEYS),
-                "teacher_enabled": tp.teacher_enabled if tp else (key not in PREMIUM_MODULE_KEYS),
-                "student_enabled": tp.student_enabled if tp else (key not in PREMIUM_MODULE_KEYS),
-                "tabs": tabs,
-            })
-        return out
+    # ============ super-admin ceiling editor (PER GROUP) ============
+    # The two ceilings live on group_module_permissions: role_enabled (the page
+    # pool admins grant to roles) and admin_enabled (the admins' own sidebar).
 
     @staticmethod
-    async def set_tenant_module(db, tenant_id, module_key, *, authority=None, teacher=None, student=None, admin=None, by=None):
+    async def set_group_module(db, group_id, module_key, *, role=None, admin=None, by=None, commit=True):
         row = (await db.execute(
-            select(TenantModulePermission).where(
-                TenantModulePermission.tenant_id == tenant_id,
-                TenantModulePermission.module_key == module_key,
+            select(GroupModulePermission).where(
+                GroupModulePermission.group_id == group_id,
+                GroupModulePermission.module_key == module_key,
             )
         )).scalar_one_or_none()
         if not row:
             default = module_key not in PREMIUM_MODULE_KEYS
-            row = TenantModulePermission(
-                tenant_id=tenant_id, module_key=module_key,
-                authority_enabled=default, teacher_enabled=default, student_enabled=default,
-                admin_enabled=True,
-                configured_by=by,
+            row = GroupModulePermission(
+                group_id=group_id, module_key=module_key,
+                role_enabled=default, admin_enabled=True, configured_by=by,
             )
             db.add(row)
-        if authority is not None:
-            row.authority_enabled = authority
-        if teacher is not None:
-            row.teacher_enabled = teacher
-        if student is not None:
-            row.student_enabled = student
+        if role is not None:
+            row.role_enabled = role
         if admin is not None:
             row.admin_enabled = admin
         if by:
             row.configured_by = by
-        await db.commit()
+        # `commit=False` lets the bulk setters flush every page in ONE transaction
+        # (one round-trip) instead of committing per module.
+        if commit:
+            await db.commit()
+
+    # ---- ceiling (a): the role page-pool, per group ----
+    @staticmethod
+    async def get_group_pages(db, group_id) -> list[dict]:
+        """Per-page POOL grant for the super-admin's 'Group pages' editor. Excludes
+        admin-only tools (those are the admins' own constant toolset)."""
+        ceiling = await RBACService._group_role_map(db, group_id)
+        return [{
+            "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
+            "path": m["path"], "section": m.get("section"), "audience_group": m.get("audience_group"),
+            "required": bool(m.get("required")),
+            "enabled": True if m.get("required") else ceiling.get(m["module_key"], True),
+        } for m in MODULES if not m.get("admin_only")]
 
     @staticmethod
-    async def set_tenant_tab(db, tenant_id, module_key, tab_key, enabled: bool, by=None):
+    async def set_group_page(db, group_id, module_key, enabled: bool, by=None):
+        m = get_module(module_key)
+        if not m:
+            raise ValueError("Unknown page")
+        if m.get("required") or m.get("admin_only"):
+            return
+        await RBACService.set_group_module(db, group_id, module_key, role=enabled, by=by)
+
+    @staticmethod
+    async def set_all_group_pages(db, group_id, enabled: bool, by=None):
+        for m in MODULES:
+            if m.get("required") or m.get("admin_only"):
+                continue
+            await RBACService.set_group_module(db, group_id, m["module_key"], role=enabled, by=by, commit=False)
+        await db.commit()  # one transaction for the whole bulk change
+
+    # ---- ceiling (b): the admin pages, per group ----
+    @staticmethod
+    async def get_admin_permissions(db, organisation_id) -> list[dict]:
+        """The ADMIN's own sidebar = admin-audience pages the super-admin left ON for
+        the org's GROUP (admin_enabled). Required pages always on. Shape matches a
+        my-permissions module entry so the client can gate on it."""
+        gid = await RBACService.group_id_for_org(db, organisation_id)
+        ceiling = await RBACService._group_admin_map(db, gid)
+        out = []
+        for m in modules_for(AUTHORITY):
+            enabled = True if m.get("required") else ceiling.get(m["module_key"], True)
+            out.append({
+                "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
+                "path": m["path"], "enabled": enabled, "required": bool(m.get("required")), "locked": False,
+                "tabs": [{"tab_key": t[0], "tab_label": t[1]} for t in m["tabs"]],
+                "tab_permissions": {t[0]: True for t in m["tabs"]}, "locked_tabs": {},
+            })
+        return out
+
+    @staticmethod
+    async def get_admin_pages(db, group_id) -> list[dict]:
+        """Per-page ADMIN grant for the super-admin's 'Admin pages' editor (per group)."""
+        ceiling = await RBACService._group_admin_map(db, group_id)
+        return [{
+            "module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
+            "path": m["path"], "section": m.get("section"), "audience_group": m.get("audience_group"),
+            "required": bool(m.get("required")),
+            "enabled": True if m.get("required") else ceiling.get(m["module_key"], True),
+        } for m in modules_for(AUTHORITY)]
+
+    @staticmethod
+    async def set_admin_page(db, group_id, module_key, enabled: bool, by=None):
+        m = get_module(module_key)
+        if not m:
+            raise ValueError("Unknown page")
+        if m.get("required"):
+            return
+        await RBACService.set_group_module(db, group_id, module_key, admin=enabled, by=by)
+
+    @staticmethod
+    async def set_all_admin_pages(db, group_id, enabled: bool, by=None):
+        for m in modules_for(AUTHORITY):
+            if m.get("required"):
+                continue
+            await RBACService.set_group_module(db, group_id, m["module_key"], admin=enabled, by=by, commit=False)
+        await db.commit()  # one transaction for the whole bulk change
+
+    @staticmethod
+    async def set_group_tab(db, group_id, module_key, tab_key, enabled: bool, by=None):
         row = (await db.execute(
-            select(TenantTabPermission).where(
-                TenantTabPermission.tenant_id == tenant_id,
-                TenantTabPermission.module_key == module_key,
-                TenantTabPermission.tab_key == tab_key,
+            select(GroupTabPermission).where(
+                GroupTabPermission.group_id == group_id,
+                GroupTabPermission.module_key == module_key,
+                GroupTabPermission.tab_key == tab_key,
             )
         )).scalar_one_or_none()
         if row:
             row.enabled = enabled
         else:
-            db.add(TenantTabPermission(tenant_id=tenant_id, module_key=module_key, tab_key=tab_key, enabled=enabled, configured_by=by))
+            db.add(GroupTabPermission(group_id=group_id, module_key=module_key, tab_key=tab_key, enabled=enabled, configured_by=by))
         await db.commit()
