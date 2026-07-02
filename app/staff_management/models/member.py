@@ -32,8 +32,10 @@ class Member(Base):
 
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
-    # Email OPTIONAL — login is phone+password. Unique holds for non-null values.
-    email = Column(String(100), nullable=True, unique=True, index=True)
+    # Email OPTIONAL — login is phone+password. Uniqueness is enforced by a PARTIAL
+    # unique index on live rows (uq_members_email_active, WHERE is_deleted=false) so a
+    # soft-deleted member's email can be reused; the email trgm index covers search.
+    email = Column(String(100), nullable=True)
     # Phone is the login id when set, but NULLABLE: a member can be created name-only
     # (e.g. an org's auto-created head/Principal) and get a phone later to enable login.
     phone = Column(String(20), nullable=True, index=True)

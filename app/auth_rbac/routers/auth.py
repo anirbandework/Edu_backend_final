@@ -688,64 +688,6 @@ async def switch_organisation(
     )
 
 
-# Clean head-role title per org type. Tutor is intentionally absent → no head role/user
-# (a private tutor IS the admin, registering themselves).
-_HEAD_ROLE_BY_TYPE = {
-    "school": "Principal",
-    "college": "Principal",
-    "university": "Director",
-    "coaching": "Director",
-    "institute": "Director",
-    "other": "Head",
-}
-
-
-async def _bootstrap_org_head(db: AsyncSession, organisation_id, *, head_name: str,
-                              org_type: str, created_by):
-    """On org creation, auto-create the org's HEAD as a role + member and link them:
-    e.g. a School with head 'xyz' → a 'Principal' staff role with member 'xyz' assigned.
-    The member is name-only (no phone/login yet — the admin sets that in Staff & Users).
-    Returns {role, member} or None (skipped for Tutor / blank head)."""
-    from sqlalchemy import select as _select
-    from ..access.models import RbacRole
-    from ..access.service import RBACService
-    from ...staff_management.models.member import Member
-
-    title = _HEAD_ROLE_BY_TYPE.get((org_type or "").strip().lower())
-    head_name = (head_name or "").strip()
-    if not title or not head_name:
-        return None
-
-    # Find-or-create the staff role (per organisation).
-    role = (await db.execute(
-        _select(RbacRole).where(
-            RbacRole.organisation_id == organisation_id,
-            RbacRole.user_type == "staff",
-            RbacRole.role_name == title,
-            RbacRole.is_deleted == False,  # noqa: E712
-        )
-    )).scalar_one_or_none()
-    if role is None:
-        role = await RBACService.create_role(
-            db, organisation_id=organisation_id, user_type="staff", role_name=title,
-            description=f"Head of the organisation (auto-created on org setup).",
-            created_by=str(created_by) if created_by else None,
-        )
-
-    # Create the head member (name only) assigned to that role.
-    parts = head_name.split()
-    first = parts[0]
-    last = " ".join(parts[1:]) if len(parts) > 1 else ""
-    member = Member(
-        organisation_id=organisation_id, rbac_role_id=role.id,
-        first_name=first, last_name=last, phone=None, status="invited",
-        role="staff", created_by=created_by,
-    )
-    db.add(member)
-    await db.commit()
-    return {"role": title, "member": head_name}
-
-
 @router.post("/organisations")
 async def create_my_organisation(
     body: OrganisationCreate,
@@ -780,22 +722,24 @@ async def create_my_organisation(
         "UPDATE authorities SET organisation_id = :tid WHERE id = :oid AND organisation_id IS NULL"
     ), {"tid": str(organisation.id), "oid": str(principal.user_id)})
     await db.commit()
-    # Auto-bootstrap the org's HEAD as a role + member (e.g. School head 'xyz' → a
-    # 'Principal' role with member 'xyz' assigned). Skipped for a Tutor (the tutor IS
-    # the admin). Best-effort: a hiccup here never fails the org creation itself.
-    head = None
+    # Seed the org_type's STARTER ROLES (Teacher/Student/Parent/... with capabilities +
+    # a safe default) and attach the named head to the head role. All admin-editable.
+    # Best-effort: a hiccup here never fails the org creation itself.
+    seed = None
     try:
-        head = await _bootstrap_org_head(
-            db, organisation.id,
-            head_name=organisation_dict.get("head_name") or "",
+        from ..access.org_presets import seed_starter_roles
+        seed = await seed_starter_roles(
+            db, organisation_id=organisation.id,
             org_type=organisation_dict.get("org_type") or "School",
             created_by=principal.user_uuid,
+            head_name=organisation_dict.get("head_name") or "",
         )
-    except Exception as e:  # pragma: no cover - bootstrap must not break org creation
+    except Exception as e:  # pragma: no cover - seeding must not break org creation
         import logging
-        logging.getLogger(__name__).warning("org-head bootstrap failed: %s", e)
+        logging.getLogger(__name__).warning("starter-role seeding failed: %s", e)
     return {"id": str(organisation.id), "name": organisation.name,
-            "code": organisation.code, "message": "Organisation created", "head": head}
+            "code": organisation.code, "message": "Organisation created",
+            "head": (seed or {}).get("head"), "seeded_roles": (seed or {}).get("roles")}
 
 
 def _org_detail(o) -> dict:
