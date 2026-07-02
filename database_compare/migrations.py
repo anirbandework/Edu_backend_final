@@ -108,6 +108,31 @@ MIGRATIONS = [
      "CREATE UNIQUE INDEX IF NOT EXISTS uq_authorities_phone_active "
      "ON authorities (phone) WHERE is_deleted = false"),
 
+    # ── integrity: EMAIL uniqueness scoped to live rows (mirror the phone rule) ──
+    # The model used to declare an UNCONDITIONAL unique on email (ix_members_email /
+    # ix_authorities_email), so a soft-deleted user's email could never be reused.
+    # Drop that and enforce uniqueness only among non-deleted rows. (Skipped if legacy
+    # duplicates exist among live rows — dedup then re-run.)
+    ("drop members.email unconditional unique",
+     "DROP INDEX IF EXISTS ix_members_email"),
+    ("uq members.email (active)",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_members_email_active "
+     "ON members (email) WHERE is_deleted = false"),
+    ("drop authorities.email unconditional unique",
+     "DROP INDEX IF EXISTS ix_authorities_email"),
+    ("uq authorities.email (active)",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_authorities_email_active "
+     "ON authorities (email) WHERE is_deleted = false"),
+
+    # ── scale: compound (filter, is_deleted) indexes for hot list queries ────────
+    # (members already has ix_members_org_active above.)
+    ("ix authorities.group_id+is_deleted",
+     "CREATE INDEX IF NOT EXISTS ix_authorities_group_active "
+     "ON authorities (group_id, is_deleted)"),
+    ("ix feedback.organisation_id+is_deleted",
+     "CREATE INDEX IF NOT EXISTS ix_feedback_org_active "
+     "ON feedback (organisation_id, is_deleted)"),
+
     # ── cleanup: the invitation / signup-link system was removed (onboarding is now
     #    password-less first-login via phone + OTP). Drop the orphaned, never-used table.
     ("drop invitations table",
@@ -123,6 +148,42 @@ MIGRATIONS = [
     #    Filled values are stored on members.profile['custom_fields'] (existing JSON).
     ("rbac_roles.custom_fields",
      "ALTER TABLE rbac_roles ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '[]'::jsonb"),
+
+    # ── role capabilities: behaviour flags (learner|instructor|class_head|guardian|
+    #    admin_staff) so academic flows resolve people by capability, not by a hardcoded
+    #    teacher/student. JSON list of capability keys. See access/capabilities.py and
+    #    important_documents/CONNECTIONS_AND_FLOW.md.
+    ("rbac_roles.capabilities",
+     "ALTER TABLE rbac_roles ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '[]'::jsonb"),
+
+    # ── class membership: role_in_class (hardcoded student/teacher/assistant) becomes
+    #    `capacity` (a participant CAPABILITY key derived from the member's role). Rename
+    #    the column, relax it (nullable, no default), map legacy values, and make a member
+    #    belong to a class ONCE (drop the 3-col unique, add a 2-col one). See
+    #    CONNECTIONS_AND_FLOW.md §3.2. All idempotent.
+    ("class_members.role_in_class -> capacity",
+     "DO $$ BEGIN "
+     "IF EXISTS (SELECT 1 FROM information_schema.columns "
+     "           WHERE table_name='class_members' AND column_name='role_in_class') THEN "
+     "  ALTER TABLE class_members RENAME COLUMN role_in_class TO capacity; "
+     "END IF; END $$"),
+    ("class_members.capacity drop not null",
+     "ALTER TABLE class_members ALTER COLUMN capacity DROP NOT NULL"),
+    ("class_members.capacity drop default",
+     "ALTER TABLE class_members ALTER COLUMN capacity DROP DEFAULT"),
+    ("class_members.capacity map legacy values",
+     "UPDATE class_members SET capacity = CASE capacity "
+     "  WHEN 'student' THEN 'learner' WHEN 'teacher' THEN 'instructor' "
+     "  WHEN 'assistant' THEN 'instructor' ELSE capacity END "
+     "WHERE capacity IN ('student','teacher','assistant')"),
+    # Swap the membership uniqueness from (class,member,role) to (class,member): a member
+    # is in a class once, capacity comes from their role. (Skipped if legacy duplicate
+    # (class,member) pairs exist — dedup then re-run.)
+    ("drop old uq_class_member_active (3-col)",
+     "DROP INDEX IF EXISTS uq_class_member_active"),
+    ("uq class_members (class,member) active",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_class_member_active "
+     "ON class_members (class_id, member_id) WHERE is_deleted = false"),
 
     # ── scale: indexes for the Staff & Users search/filter at 100k+ members/org ──
     # The directory search uses ILIKE '%term%' (leading wildcard) on name/email/phone,
@@ -147,6 +208,24 @@ MIGRATIONS = [
     # to an already-existing table — ensure it for the per-org role list/lookup.
     ("ix rbac_roles.organisation_id",
      "CREATE INDEX IF NOT EXISTS ix_rbac_roles_org ON rbac_roles (organisation_id)"),
+
+    # ── attendance (Phase 1): one class_session per (class, date, subject). The COALESCE
+    #    collapses the daily case (subject NULL) to one-per-(class,date). Expression index,
+    #    so it lives here (create_all can't build it). The tables themselves are ORM-built.
+    ("uq class_sessions (class,date,subject) active",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_class_session_active "
+     "ON class_sessions (class_id, date, "
+     "COALESCE(subject_id, '00000000-0000-0000-0000-000000000000'::uuid)) "
+     "WHERE is_deleted = false"),
+
+    # ── timetable (Phase 1): one slot per (class, weekday, start_time, subject). COALESCE
+    #    collapses the no-subject case so a class can't get exact-duplicate periods. Expression
+    #    index → lives here. (Overlap detection is a future enhancement.)
+    ("uq timetable_slots (class,weekday,start,subject) active",
+     "CREATE UNIQUE INDEX IF NOT EXISTS uq_timetable_slot_active "
+     "ON timetable_slots (class_id, weekday, start_time, "
+     "COALESCE(subject_id, '00000000-0000-0000-0000-000000000000'::uuid)) "
+     "WHERE is_deleted = false"),
     # Role-filtered staff list + count_role_users both filter rbac_role_id on live rows.
     ("ix members.rbac_role_id (active)",
      "CREATE INDEX IF NOT EXISTS ix_members_rbac_role_active "

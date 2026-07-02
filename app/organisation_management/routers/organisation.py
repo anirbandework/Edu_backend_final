@@ -249,6 +249,20 @@ async def create_organisation(
             )
             await db.commit()
 
+        # Seed the org_type's starter roles (capabilities + safe default) + attach the
+        # named head — same as the admin self-service path, so both creation paths produce
+        # a ready-to-use org. Best-effort: never fails the org creation itself.
+        try:
+            from ...auth_rbac.access.org_presets import seed_starter_roles
+            await seed_starter_roles(
+                db, organisation_id=organisation.id,
+                org_type=organisation_dict.get("org_type") or "School",
+                created_by=getattr(principal, "user_uuid", None),
+                head_name=organisation_dict.get("head_name") or "",
+            )
+        except Exception as seed_err:  # pragma: no cover - seeding must not break creation
+            logger.warning("starter-role seeding failed: %s", str(seed_err))
+
         return organisation
         
     except IntegrityError as e:
@@ -843,22 +857,29 @@ async def get_comprehensive_statistics(
         stats = result.first()
         total, active, with_charges = stats[0] or 0, stats[1] or 0, stats[4] or 0
 
-        # Platform-wide people counts (students / teachers / admins).
+        # Platform-wide people counts. "Learners"/"instructors" are derived from role
+        # CAPABILITIES — NOT a hardcoded profile.category=='student' — so the tallies are
+        # meaningful across schools, colleges, coaching and tutors alike. A member with no
+        # learner/instructor-capable role (office staff) counts in neither.
         people = (await db.execute(text(
             """
             SELECT
-              (SELECT COUNT(*) FROM members WHERE is_deleted = false AND (profile->>'category') = 'student') AS students,
-              (SELECT COUNT(*) FROM members WHERE is_deleted = false AND (profile->>'category') IS DISTINCT FROM 'student') AS teachers,
+              (SELECT COUNT(*) FROM members m JOIN rbac_roles r ON r.id = m.rbac_role_id
+                 WHERE m.is_deleted = false AND r.capabilities @> '["learner"]'::jsonb) AS learners,
+              (SELECT COUNT(*) FROM members m JOIN rbac_roles r ON r.id = m.rbac_role_id
+                 WHERE m.is_deleted = false AND r.capabilities @> '["instructor"]'::jsonb) AS instructors,
+              (SELECT COUNT(*) FROM members WHERE is_deleted = false) AS members_total,
               (SELECT COUNT(*) FROM authorities
                  WHERE is_deleted = false AND role = 'authority') AS admins,
               (SELECT COUNT(*) FROM authorities
                  WHERE is_deleted = false AND role = 'authority' AND status = 'active') AS admins_active
             """
         ))).first()
-        total_students = people[0] or 0
-        total_teachers = people[1] or 0
-        total_admins = people[2] or 0
-        admins_active = people[3] or 0
+        total_students = people[0] or 0      # learners (role has 'learner' capability)
+        total_teachers = people[1] or 0      # instructors (role has 'instructor' capability)
+        total_members = people[2] or 0
+        total_admins = people[3] or 0
+        admins_active = people[4] or 0
 
         # Distribution of organisations by type.
         type_rows = (await db.execute(text(
@@ -876,6 +897,7 @@ async def get_comprehensive_statistics(
             "average_tuition": stats[3] or 0.0,
             "total_students": total_students,
             "total_teachers": total_teachers,
+            "total_members": total_members,
             "total_admins": total_admins,
             "active_admins": admins_active,
             "inactive_admins": total_admins - admins_active,

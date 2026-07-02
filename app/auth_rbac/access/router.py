@@ -12,7 +12,7 @@ from ..security.deps import get_current_principal, require_super_admin, require_
 from ..security.principal import Principal
 from . import catalog
 from .service import RBACService
-from .deps import resolve_role_id, _IDENTITY_TABLE
+from .deps import resolve_role_id, _IDENTITY_TABLE, require_authority_or_module
 
 # NOTE: legacy /api/rbac is taken by the incoherent rbac_management router; this
 # module/tab RBAC (the one we actually enforce) lives under /api/access.
@@ -22,15 +22,15 @@ router = APIRouter(prefix="/api/access", tags=["RBAC (module/tab)"])
 # ---------- schemas ----------
 class RoleCreate(BaseModel):
     role_name: str
-    # Defaults to the unified dynamic-staff type: every admin-created role is
-    # dynamic (the admin names it freely and picks its pages). Legacy
-    # teacher/student/authority roles may still be created by passing user_type.
+    # Defaults to the unified dynamic-staff type: every admin-created member role is
+    # dynamic (the admin names it freely, picks its pages, and sets its capabilities).
     user_type: str = "staff"
     description: Optional[str] = None
     is_default: bool = False
     modules: Optional[List[str]] = None              # cross-section page grants
     creatable_role_ids: Optional[List[str]] = None   # delegated user-creation
     custom_fields: Optional[List[dict]] = None       # admin-defined per-role fields
+    capabilities: Optional[List[str]] = None         # behaviour flags (learner/instructor/...)
 
 
 class RoleUpdate(BaseModel):
@@ -40,6 +40,7 @@ class RoleUpdate(BaseModel):
     modules: Optional[List[str]] = None
     creatable_role_ids: Optional[List[str]] = None
     custom_fields: Optional[List[dict]] = None
+    capabilities: Optional[List[str]] = None
 
 
 class ModuleToggle(BaseModel):
@@ -79,11 +80,14 @@ async def my_permissions(
     # admin may hand to their users' roles). Required pages (Profile) stay on.
     if principal.role == "authority":
         modules = await RBACService.get_admin_permissions(db, principal.organisation_uuid)
-        return {"user_type": principal.role, "modules": modules}
+        admin_role_id = await resolve_role_id(db, principal.role, principal.user_id)
+        return {"user_type": principal.role, "modules": modules,
+                "capabilities": await RBACService.role_capabilities(db, admin_role_id)}
     if principal.is_super_admin:
         # super-admin sees the full catalog as "enabled"
         return {
             "user_type": "super_admin",
+            "capabilities": [],
             "modules": [
                 {"module_key": m["module_key"], "module_name": m["module_name"], "icon": m["icon"],
                  "path": m["path"], "enabled": True, "locked": False,
@@ -96,7 +100,8 @@ async def my_permissions(
     # cross-section allow-list (default-DENY) ∩ the GROUP page-pool ceiling.
     role_id = await resolve_role_id(db, principal.role, principal.user_id)
     modules = await RBACService.get_staff_permissions(db, role_id, principal.organisation_uuid)
-    return {"user_type": principal.role, "role_id": role_id, "modules": modules}
+    return {"user_type": principal.role, "role_id": role_id, "modules": modules,
+            "capabilities": await RBACService.role_capabilities(db, role_id)}
 
 
 @router.get("/grantable-pages")
@@ -105,6 +110,73 @@ async def grantable_pages(principal: Principal = Depends(require_authority),
     """For the admin's Roles & Access picker: every page + a `locked` flag (the org
     doesn't have it → show 'Premium / upgrade', not assignable)."""
     return await RBACService.grantable_pages(db, principal.organisation_uuid)
+
+
+@router.get("/members")
+async def members_by_capability(
+    capability: str,
+    # Not admin-only: any user who holds a page that needs the picker (timetable/attendance/
+    # classes) may read it. Still strictly org-scoped + active-only inside the service.
+    principal: Principal = Depends(require_authority_or_module("timetable", "attendance", "classes")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Members whose ROLE carries `capability` (e.g. 'instructor') — the canonical picker
+    source for attendance/timetable/class-head, resolved by capability, never a role name."""
+    from .capabilities import CAPABILITY_KEYS
+    if capability not in CAPABILITY_KEYS:
+        raise HTTPException(status_code=400, detail="Unknown capability.")
+    if not principal.organisation_id:
+        raise HTTPException(status_code=400, detail="No organisation in session.")
+    return await RBACService.members_with_capability(db, principal.organisation_id, capability)
+
+
+@router.get("/setup-state")
+async def setup_state(principal: Principal = Depends(require_authority),
+                      db: AsyncSession = Depends(get_db)):
+    """A single read of how far the admin has configured the org — drives the "Finish
+    setup" checklist + per-page smart empty-states (no per-page count queries). Reports
+    role CAPABILITY coverage (has a teaching role / a learner role) so the flow can guide
+    the admin to a usable state. See CONNECTIONS_AND_FLOW.md §5."""
+    org = principal.organisation_id
+    if not org:
+        raise HTTPException(status_code=400, detail="No organisation in session.")
+    roles = (await db.execute(text(
+        """SELECT count(*),
+                  count(*) FILTER (WHERE capabilities @> '["instructor"]'::jsonb),
+                  count(*) FILTER (WHERE capabilities @> '["learner"]'::jsonb),
+                  count(*) FILTER (WHERE is_default)
+           FROM rbac_roles
+           WHERE organisation_id = :o AND is_deleted = false AND user_type = 'staff'"""),
+        {"o": org})).first()
+    users = (await db.execute(text(
+        "SELECT count(*) FROM members WHERE organisation_id = :o AND is_deleted = false"),
+        {"o": org})).scalar()
+    sess = (await db.execute(text(
+        "SELECT count(*), count(*) FILTER (WHERE is_current) FROM academic_sessions "
+        "WHERE organisation_id = :o AND is_deleted = false"), {"o": org})).first()
+    classes = (await db.execute(text(
+        "SELECT count(*) FROM classes WHERE organisation_id = :o AND is_deleted = false"),
+        {"o": org})).scalar()
+    subjects = (await db.execute(text(
+        "SELECT count(*) FROM subjects WHERE organisation_id = :o AND is_deleted = false"),
+        {"o": org})).scalar()
+    has_settings = (await db.execute(text(
+        "SELECT 1 FROM org_settings WHERE organisation_id = :o LIMIT 1"), {"o": org})).first()
+    org_type = (await db.execute(text(
+        "SELECT org_type FROM organisations WHERE id = :o"), {"o": org})).scalar()
+    return {
+        "org_type": org_type,
+        "terminology_reviewed": bool(has_settings),
+        "roles_count": roles[0] or 0,
+        "has_instructor_role": (roles[1] or 0) > 0,
+        "has_learner_role": (roles[2] or 0) > 0,
+        "has_default_role": (roles[3] or 0) > 0,
+        "users_count": users or 0,
+        "sessions_count": sess[0] or 0,
+        "current_session_set": (sess[1] or 0) > 0,
+        "classes_count": classes or 0,
+        "subjects_count": subjects or 0,
+    }
 
 
 # ========= module-access ceilings (super-admin, PER INSTITUTION GROUP) =========
@@ -202,7 +274,8 @@ async def list_roles(
     offset = max(0, int(offset or 0))
     roles = await RBACService.list_roles(db, _role_organisation(principal), user_type)
     items = [{"id": str(r.id), "role_name": r.role_name, "role_key": r.role_key,
-              "user_type": r.user_type, "description": r.description, "is_default": r.is_default}
+              "user_type": r.user_type, "description": r.description, "is_default": r.is_default,
+              "capabilities": r.capabilities or []}
              for r in roles]
     term = (q or "").strip().lower()
     if term:
@@ -225,7 +298,7 @@ async def create_role(
             db, organisation_id=_role_organisation(principal), user_type=body.user_type,
             role_name=body.role_name, description=body.description,
             is_default=body.is_default, created_by=principal.user_uuid,
-            custom_fields=body.custom_fields,
+            custom_fields=body.custom_fields, capabilities=body.capabilities,
         )
         # The bulk allow-list write is the dynamic-staff path (no organisation ceiling).
         # Legacy teacher/student/authority roles must use the ceiling-checked
@@ -256,7 +329,7 @@ async def update_role(role_id: str, body: RoleUpdate,
     try:
         role = await RBACService.update_role(db, role_id, role_name=body.role_name,
                                              description=body.description, is_default=body.is_default,
-                                             custom_fields=body.custom_fields)
+                                             custom_fields=body.custom_fields, capabilities=body.capabilities)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if body.modules is not None and role.user_type == catalog.STAFF:
@@ -302,6 +375,7 @@ async def role_detail(role_id: str, principal: Principal = Depends(require_autho
         "modules": await RBACService.get_role_module_keys(db, role.id),
         "creatable_role_ids": await RBACService.get_creatable_role_ids(db, role.id),
         "custom_fields": role.custom_fields or [],
+        "capabilities": role.capabilities or [],
     }
 
 
@@ -320,7 +394,7 @@ async def assignable_roles(
     if principal.is_authority or principal.is_super_admin:
         roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
         return [{"id": str(r.id), "role_name": r.role_name, "description": r.description,
-                 "custom_fields": r.custom_fields or []}
+                 "custom_fields": r.custom_fields or [], "capabilities": r.capabilities or []}
                 for r in roles]
     if principal.role == "staff":
         role_id = await resolve_role_id(db, "staff", principal.user_id)
@@ -336,7 +410,7 @@ async def assignable_roles(
             return []
         roles = await RBACService.list_roles(db, principal.organisation_id, "staff")
         return [{"id": str(r.id), "role_name": r.role_name, "description": r.description,
-                 "custom_fields": r.custom_fields or []}
+                 "custom_fields": r.custom_fields or [], "capabilities": r.capabilities or []}
                 for r in roles]
     return []
 

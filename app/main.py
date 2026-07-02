@@ -23,6 +23,13 @@ from .feedback_management.routers.feedback import router as feedback_router
 from .staff_management.routers.staff import router as staff_router
 from .auth_rbac.routers.auth import router as auth_router
 from .auth_rbac.access.router import router as access_rbac_router
+# --- Phase-0 spine routers (academic structure + org config) ---
+from .academic_session_management.routers.sessions import router as sessions_router
+from .class_management.routers.classes import router as classes_router
+from .subject_management.routers.subjects import router as subjects_router
+from .attendance_management.routers.attendance import router as attendance_router
+from .timetable_management.routers.timetable import router as timetable_router
+from .settings_management.routers.settings import router as settings_router
 # Eagerly register the SuperAdmin model (only lazily imported in login_service)
 # so the startup create_all below also builds the super_admins table.
 from .auth_rbac.models.super_admin import SuperAdmin  # noqa: F401
@@ -31,6 +38,14 @@ from .staff_management.models.member import Member  # noqa: F401
 from .auth_rbac.access.models import RoleCreatableRole  # noqa: F401
 # Institution group (top-level grouping above organisations).
 from .group_management.models.group import InstitutionGroup  # noqa: F401
+# Phase-0 spine models — eager-imported so create_all builds their tables on startup.
+from .academic_session_management.models.academic_session import AcademicSession  # noqa: F401
+from .class_management.models.class_group import ClassGroup, ClassMembership  # noqa: F401
+from .class_management.models.class_subject import ClassSubject, SubjectTeacher  # noqa: F401
+from .subject_management.models.subject import Subject  # noqa: F401
+from .attendance_management.models.attendance import ClassSession, AttendanceRecord  # noqa: F401
+from .timetable_management.models.timetable import TimetableSlot  # noqa: F401
+from .settings_management.models.org_settings import OrgSettings  # noqa: F401
 from .models.base import Base
 # NOTE: the legacy page-based access routers (user_role, user_access, role_management,
 # page_permissions, rbac_management, super_admin grant-pages) are retired — superseded
@@ -233,6 +248,15 @@ app.include_router(authority_router, dependencies=AUTHED)
 # (gated per-route inside the router).
 app.include_router(feedback_router, dependencies=AUTHED)
 app.include_router(staff_router, dependencies=AUTHED)
+
+# Phase-0 spine — academic structure + org config. Each router is internally gated by
+# its own module key (require_authority_or_module); AUTHED ensures a valid token first.
+app.include_router(sessions_router, dependencies=AUTHED)
+app.include_router(classes_router, dependencies=AUTHED)
+app.include_router(subjects_router, dependencies=AUTHED)
+app.include_router(attendance_router, dependencies=AUTHED)
+app.include_router(timetable_router, dependencies=AUTHED)
+app.include_router(settings_router, dependencies=AUTHED)
 
 # Access control — module/tab RBAC (indusinfotechs-style): my-permissions + role
 # mgmt + organisation config. Per-route auth inside the router. This is the ONLY

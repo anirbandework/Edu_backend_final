@@ -15,9 +15,13 @@ STUDENT = "student"
 # module across every section (it is not audience-restricted); its pages come
 # from an explicit allow-list of RoleModulePermission rows.
 STAFF = "staff"
-USER_TYPES = (AUTHORITY, TEACHER, STUDENT)
-# user_types that an admin may create an rbac_role for (staff included)
-ROLE_USER_TYPES = (AUTHORITY, TEACHER, STUDENT, STAFF)
+# TEACHER/STUDENT remain only as audience-list constants (presentational grouping in the
+# page picker); they are NO LONGER creatable user types. The teacher/student distinction
+# now lives in role CAPABILITIES (see capabilities.py) — every member role is 'staff'.
+USER_TYPES = (AUTHORITY, STAFF)
+# user_types that an admin may create an rbac_role for: admin-side (authority) or the
+# unified dynamic member type (staff). No teacher/student — that is a capability now.
+ROLE_USER_TYPES = (AUTHORITY, STAFF)
 
 # Functional sections — used by the page-picker UI to group modules so an admin
 # can compose a custom role from pages across areas.
@@ -50,7 +54,7 @@ _AUDIENCE_GROUP = {
 # admin-only management tools. (The old teacher/student-coupled exclusions are gone —
 # quizzes/assignments/grades are now on member_id and gate with require_authority_or_module,
 # so a dynamic 'staff' role like "Teacher" CAN be granted them.)
-_ADMIN_ONLY = {"rbac_management"}                                  # admin's own tools
+_ADMIN_ONLY = {"rbac_management", "org_settings"}                  # admin's own tools
 # my_classes/chat stay non-grantable for now (their FE screens/paths need post-teardown cleanup).
 _NOT_STAFF_GRANTABLE = {"my_classes", "chat"}
 
@@ -92,6 +96,23 @@ MODULES = [
     _m("rbac_management", "Roles & Access", "admin_panel_settings", "/admin/roles", [AUTHORITY],
        section=SEC_ADMIN),
     _m("staff", "Staff & Users", "badge", "/admin/staff", [AUTHORITY], section=SEC_ADMIN),
+
+    # --- Phase-0 spine (the universal academic structure every org type shares) ---
+    # See important_documents/MODULE_MASTER_PLAN.md §3. `classes` is the generic
+    # Class/Batch/Course container (NOT institution groups); it renders per org_type.
+    _m("academic_session", "Academic Sessions", "calendar_today", "/admin/sessions", [AUTHORITY],
+       section=SEC_CORE),
+    _m("classes", "Classes & Batches", "groups", "/admin/classes", [AUTHORITY],
+       section=SEC_CORE),
+    _m("subjects", "Subjects", "menu_book", "/admin/subjects", [AUTHORITY],
+       section=SEC_ACADEMICS),
+    # --- Phase 1: Attendance + Timetable — staff-grantable so instructor roles get them ---
+    _m("attendance", "Attendance", "fact_check", "/admin/attendance", [AUTHORITY],
+       section=SEC_ACADEMICS),
+    _m("timetable", "Timetable", "calendar_view_week", "/admin/timetable", [AUTHORITY],
+       section=SEC_ACADEMICS),
+    _m("org_settings", "Settings", "settings", "/admin/settings", [AUTHORITY],
+       section=SEC_ADMIN),
 ]
 
 # Premium modules default OFF at the organisation level (super-admin must enable).
@@ -120,12 +141,3 @@ def module_keys_for(user_type: str):
 def tab_keys(module_key: str):
     m = _BY_KEY.get(module_key)
     return [t[0] for t in (m["tabs"] if m else [])]
-
-
-def enabled_field(user_type: str) -> str:
-    """Column on organisation_module_permission for a user type."""
-    return {
-        AUTHORITY: "authority_enabled",
-        TEACHER: "teacher_enabled",
-        STUDENT: "student_enabled",
-    }[user_type]

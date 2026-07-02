@@ -146,14 +146,16 @@ class RBACService:
 
     @staticmethod
     async def create_role(db, *, organisation_id, user_type, role_name, description=None,
-                          is_default=False, created_by=None, custom_fields=None):
+                          is_default=False, created_by=None, custom_fields=None, capabilities=None):
         if user_type not in catalog.ROLE_USER_TYPES:
             raise ValueError(f"invalid user_type {user_type}")
         from . import custom_fields as cf
+        from . import capabilities as cap
         role = RbacRole(
             organisation_id=organisation_id, user_type=user_type, role_name=role_name,
             role_key=_slug(role_name), description=description, is_default=is_default,
             created_by=created_by, custom_fields=cf.normalize_definitions(custom_fields),
+            capabilities=cap.normalize_capabilities(capabilities),
         )
         db.add(role)
         try:
@@ -187,7 +189,7 @@ class RBACService:
 
     @staticmethod
     async def update_role(db, role_id, *, role_name=None, description=None, is_default=None,
-                          custom_fields=None):
+                          custom_fields=None, capabilities=None):
         role = await RBACService.get_role(db, role_id)
         if not role:
             return None
@@ -199,6 +201,9 @@ class RBACService:
         if custom_fields is not None:
             from . import custom_fields as cf
             role.custom_fields = cf.normalize_definitions(custom_fields)
+        if capabilities is not None:
+            from . import capabilities as cap
+            role.capabilities = cap.normalize_capabilities(capabilities)
         if is_default is not None:
             role.is_default = is_default
             if is_default:
@@ -215,6 +220,52 @@ class RBACService:
             text("SELECT count(*) FROM members WHERE rbac_role_id = :rid AND is_deleted = false"),
             {"rid": str(role_id)})
         return int(row.scalar() or 0)
+
+    # ---------------- capabilities (behaviour-flag lookups; see capabilities.py) ----
+    @staticmethod
+    async def role_capabilities(db, role_id) -> list[str]:
+        """The capability keys a role grants (``[]`` if no role / none)."""
+        if not role_id:
+            return []
+        role = await RBACService.get_role(db, role_id)
+        return list(role.capabilities or []) if role else []
+
+    @staticmethod
+    async def roles_with_capability(db, organisation_id, capability: str):
+        """Every (non-deleted) role in the org whose capabilities include ``capability``.
+        This is the canonical "which roles can teach / are learners" lookup — modules
+        use it instead of matching a role NAME."""
+        stmt = select(RbacRole).where(
+            RbacRole.organisation_id == organisation_id,
+            RbacRole.is_deleted == False,                      # noqa: E712
+            RbacRole.capabilities.contains([capability]),       # JSONB @> ['cap']
+        ).order_by(RbacRole.role_name)
+        return (await db.execute(stmt)).scalars().all()
+
+    @staticmethod
+    async def members_with_capability(db, organisation_id, capability: str) -> list[dict]:
+        """Every active member whose ROLE has ``capability`` — the canonical
+        "give me the instructors / learners" lookup (people resolved via roles, never
+        a hardcoded person-type)."""
+        from ...staff_management.models.member import Member
+        rows = (await db.execute(
+            select(Member.id, Member.first_name, Member.last_name,
+                   RbacRole.id, RbacRole.role_name)
+            .join(RbacRole, RbacRole.id == Member.rbac_role_id)
+            .where(
+                Member.organisation_id == organisation_id,
+                Member.is_deleted == False,                     # noqa: E712
+                Member.status == "active",                       # exclude deactivated members
+                RbacRole.capabilities.contains([capability]),
+            )
+            .order_by(Member.first_name, Member.last_name)
+        )).all()
+        return [{
+            "id": str(r[0]),
+            "name": f"{r[1] or ''} {r[2] or ''}".strip(),
+            "role_id": str(r[3]),
+            "role_name": r[4],
+        } for r in rows]
 
     @staticmethod
     async def delete_role(db, role_id, *, reassign_to_role_id=None) -> bool:

@@ -19,9 +19,10 @@ class Authority(Base):
     authority_id = Column(String(20), nullable=False, index=True)
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
-    # Email is OPTIONAL — login is by phone+password. Unique still holds for the
-    # non-null values (Postgres allows multiple NULLs under a UNIQUE constraint).
-    email = Column(String(100), nullable=True, unique=True, index=True)
+    # Email is OPTIONAL — login is by phone+password. Uniqueness is a PARTIAL unique
+    # index on live rows (uq_authorities_email_active, WHERE is_deleted=false) so a
+    # soft-deleted admin's email can be reused.
+    email = Column(String(100), nullable=True)
     password_hash = Column(String(255), nullable=True)  # bcrypt; null = login disabled until set
     phone = Column(String(20), nullable=False)
     date_of_birth = Column(DateTime, nullable=True)

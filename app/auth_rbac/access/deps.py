@@ -11,10 +11,10 @@ from ..security.deps import get_current_principal
 from ..security.principal import Principal
 from .service import RBACService
 
+# The only two identity tables that hold a dynamic rbac_role_id. There is no
+# teacher/student table — every org-created person is a unified 'staff' Member.
 _IDENTITY_TABLE = {
     "authority": "authorities",
-    "teacher": "teachers",
-    "student": "students",
     "staff": "members",
 }
 
@@ -73,33 +73,6 @@ def require_authority_or_module(*module_keys: str):
         if principal.is_super_admin:
             return principal
         if principal.is_authority:
-            if await authority_admin_allowed(db, principal, module_keys):
-                return principal
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This page is turned off for your account by the platform admin.",
-            )
-        for k in module_keys:
-            if await principal_has_module(db, principal, k):
-                return principal
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this resource.",
-        )
-    return _dep
-
-
-def require_staff_or_module(*module_keys: str):
-    """ADDITIVE gate. Passes for admin / teacher / super-admin exactly as
-    `require_staff` did, PLUS a dynamic-staff user whose role grants any of
-    `module_keys`. The admin is additionally clamped by their 'Admin pages' ceiling."""
-    async def _dep(
-        principal: Principal = Depends(get_current_principal),
-        db: AsyncSession = Depends(get_db),
-    ) -> Principal:
-        if principal.is_super_admin or principal.role == "teacher":
-            return principal
-        if principal.role == "authority":
             if await authority_admin_allowed(db, principal, module_keys):
                 return principal
             raise HTTPException(

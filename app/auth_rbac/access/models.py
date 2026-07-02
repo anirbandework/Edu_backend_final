@@ -24,6 +24,11 @@ class RbacRole(Base):
     # parent name, address, ...). A JSON list of {key,label,type,required,options}.
     # Filled values live on members.profile['custom_fields']. See access/custom_fields.py.
     custom_fields = Column(JSONB, nullable=False, default=list, server_default="[]")
+    # Behaviour flags describing what this role's members DO in academic flows
+    # (learner | instructor | class_head | guardian | admin_staff). A JSON list of
+    # capability keys from access/capabilities.py. Modules query "which roles have
+    # capability X" instead of hardcoding teacher/student. Orthogonal to page grants.
+    capabilities = Column(JSONB, nullable=False, default=list, server_default="[]")
 
     __table_args__ = (
         UniqueConstraint("organisation_id", "user_type", "role_key", name="uq_rbac_role_organisation_type_key"),

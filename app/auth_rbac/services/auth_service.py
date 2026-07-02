@@ -36,8 +36,10 @@ class AuthService:
 
     @staticmethod
     async def get_user_profile(db: AsyncSession, user_id: UUID, organisation_id: UUID = None) -> Optional[dict]:
-        """Return the identity profile for a user, searching every identity table
-        (super-admin, authority, staff, teacher, student)."""
+        """Return the identity profile for a user, searching the three identity tables
+        (super-admin, authority, unified staff). There is no teacher/student table — every
+        org-created person is a Member; what they ARE comes from their role's capabilities,
+        not a profile.category string."""
         # Super-admin (platform owner; no organisation)
         from ..models.super_admin import SuperAdmin
         sa = (await db.execute(select(SuperAdmin).where(SuperAdmin.id == user_id))).scalar_one_or_none()
@@ -61,6 +63,7 @@ class AuthService:
             q = q.where(Member.organisation_id == organisation_id)
         staff = (await db.execute(q)).scalar_one_or_none()
         if staff:
+            prof = staff.profile or {}
             return {
                 "user_id": str(staff.id),
                 "user_type": "STAFF",
@@ -75,6 +78,10 @@ class AuthService:
                 "gender": staff.gender,
                 "position": staff.position,
                 "status": staff.status,
+                # The member's dynamic role pointer; its name/pages/capabilities come from
+                # /api/access/my-permissions, never reconstructed from a magic category.
+                "rbac_role_id": str(staff.rbac_role_id) if staff.rbac_role_id else None,
+                "profile": prof,
                 "last_login": _iso(staff.last_login),
                 "organisation_id": str(staff.organisation_id) if staff.organisation_id else None,
             }
@@ -108,43 +115,6 @@ class AuthService:
                 "contact_info": auth.contact_info,
                 "last_login": _iso(auth.last_login),
                 "organisation_id": str(auth.organisation_id),
-            }
-
-        # Any non-authority user is a Member (dynamic model). profile.category marks a
-        # "student" member; legacy teacher/student extras live in members.profile JSON.
-        q = select(Member).where(Member.id == user_id)
-        if organisation_id:
-            q = q.where(Member.organisation_id == organisation_id)
-        member = (await db.execute(q)).scalar_one_or_none()
-        if member:
-            prof = member.profile or {}
-            is_student = prof.get("category") == "student"
-            return {
-                "user_id": str(member.id),
-                "user_type": "STUDENT" if is_student else "STAFF",
-                "role": "student" if is_student else "staff",
-                "staff_id": member.staff_id,
-                "student_id": member.staff_id,
-                "teacher_id": member.staff_id,
-                "first_name": member.first_name,
-                "last_name": member.last_name,
-                "email": member.email,
-                "phone": member.phone,
-                "date_of_birth": _iso(member.date_of_birth),
-                "address": member.address,
-                "gender": member.gender,
-                "position": member.position,
-                "status": member.status,
-                "rbac_role_id": str(member.rbac_role_id) if member.rbac_role_id else None,
-                "roll_number": prof.get("roll_number"),
-                "admission_number": prof.get("admission_number"),
-                "grade_level": prof.get("grade_level"),
-                "section": prof.get("section"),
-                "academic_year": prof.get("academic_year"),
-                "parent_info": prof.get("parent_info"),
-                "profile": prof,
-                "last_login": _iso(member.last_login),
-                "organisation_id": str(member.organisation_id),
             }
 
         return None
